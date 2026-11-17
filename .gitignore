@@ -1,0 +1,33 @@
+# Python
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+**/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*
+*service-account*
+
+# Local data and backups
+backups/
+lumina_stage_backup.json
+*.parquet
+*.csv
+*.log
+*.bak
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
