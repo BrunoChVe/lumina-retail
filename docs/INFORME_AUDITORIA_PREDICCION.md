@@ -1,29 +1,91 @@
-# INFORME DE AUDITORÍA Y RECUPERACIÓN DEL MÓDULO PREDICCIÓN DE DEMANDA
+# INFORME DE AUDITORÍA Y RESOLUCIÓN DEFINITIVA: INCIDENTE PREDICTIVE
 
-## 1. Falla Inicial Reportada
-El módulo `Predictive` dejó de cargar en producción tras la ampliación de filtros por tienda, vendedor, país y producto implementada en la iteración previa. El frontend no renderizaba correctamente los componentes y el contenedor de FastAPI en Google Cloud Run fallaba durante el arranque.
+**Incidente:** Pantalla en blanco (White-screen of death) al seleccionar «Predicción de Demanda»  
+**Severidad:** Crítica  
+**Estado:** Resuelto, Verificado y Desplegado en Producción  
+**Revisión Cloud Run Activa:** `lumina-retail-00016-wjc` (100% de tráfico productivo)  
+**Commit en `origin/main`:** `5966c2f`  
 
-## 2. Causa Raíz Diagnosticada
+---
 
-### 2.1. Backend (FastAPI / Cloud Run)
-El contenedor Docker de Cloud Run (`lumina-retail-00015-7w2`) abortaba su inicio con el error crítico:
+## 1. Causa Raíz Diagnosticada
+
+### 1.1. Excepción en Tiempo de Renderizado (React Runtime Crash)
+Al compilar con Vite/Rollup en modo producción sin un typechecker estricto previo, el empaquetador generó el bundle de JavaScript asumiendo que los identificadores de componentes JSX no declarados localmente se resolverían en el entorno global.
+
+Específicamente, en `frontend/src/pages/Predictive.jsx`:
+- **Línea 248:** `<Search size={20} ... />`
+- **Líneas 374 y 499:** `<RefreshCw className="spin" size={20} ... />`
+
+Ambos iconos eran utilizados en el cuerpo del JSX, pero **no estaban incluidos en la sentencia de importación** de `lucide-react`:
+```javascript
+// Código con falla:
+import {
+  Target, Activity, TrendingUp, Database, Filter, Store,
+  Package, AlertTriangle, CheckCircle2, Info, FileText, Download, Zap
+} from 'lucide-react';
+// (Search y RefreshCw ausentes)
 ```
-ModuleNotFoundError: No module named 'backend'
+
+### 1.2. Colapso del Árbol de Componentes de React
+Dado que React 18/19 por defecto desmonta toda la jerarquía de componentes ante cualquier excepción no capturada lanzada durante el renderizado, cuando el usuario hacía clic en **«Predicción de Demanda»**, el motor de JavaScript ejecutaba:
 ```
-* **Diagnóstico:** Al introducir el nuevo script `backend/app/forecasting.py` para calcular modelos estadísticos granulares sobre la marcha, se introdujo la librería `numpy`. Sin embargo, `numpy` no fue declarado en el `requirements.txt`. Como resultado, la instrucción `import numpy` lanzaba un `ModuleNotFoundError`. El bloque `try/except` en `main.py` capturaba el error y, al intentar el fallback de ruta absoluta `from backend.app.forecasting`, volvía a fallar porque dentro del contenedor el directorio de trabajo es `/app`.
+ReferenceError: Search is not defined
+    at PredictiveContent (Predictive-BhoVB_A5.js:...)
+```
+Al no existir un límite de captura (**Error Boundary**), React desmontaba el componente raíz `<main>`, dejando la pantalla en blanco con el único fondo oscuro del elemento `<body>`.
 
-### 2.2. Frontend (React)
-El componente `Predictive.jsx` fue reestructurado para utilizar filtros dependientes. Sin embargo, al consultar combinaciones de dimensiones con "historial insuficiente" (ej. vendedor de Olist con un producto recién listado), la API retornaba un objeto JSON que omitía los campos de tendencias (ej. `forecastResult.metrics`). La UI original intentaba desestructurar ciegamente estos parámetros anidados para el gráfico, provocando un error en el motor de renderizado de React.
+---
 
-## 3. Correcciones Aplicadas
+## 2. Acciones Correctivas Implementadas
 
-1. **Gestión de Dependencias:** Se agregó `numpy` al archivo `requirements.txt`.
-2. **Refactorización de Rutas de Importación:** Se ajustaron los bloques `try/except` en `main.py` para priorizar las rutas de paquete absoluto (`backend.app...`) seguidas de las relativas, y se configuró para que no silenciara excepciones subyacentes de dependencias.
-3. **Manejo Defensivo en React:** Se refactorizó `Predictive.jsx` utilizando renders condicionales explícitos. Si `forecastResult?.sufficient_history` es `false`, la UI ahora aborta el renderizado de gráficos y métricas estocásticas, presentando en su lugar un banner de advertencia ("Historial Insuficiente para Pronóstico Estadístico Confiable").
-4. **Validación WAP Intacta:** El error no comprometió las tablas analíticas. El modelo Gold original en BigQuery se conservó íntegro y las métricas de evaluación del modelo por Categoría no se perdieron.
+### 2.1. Corrección Quirúrgica de Importaciones y Linter Estricto
+Se agregaron explícitamente `Search` y `RefreshCw` a las importaciones de `lucide-react` en `Predictive.jsx`:
+```javascript
+import {
+  Database, AlertTriangle, Info, FileText, Zap, Search, RefreshCw
+} from 'lucide-react';
+```
+Se ejecutó el linter estricto `oxlint src/` sobre todo el proyecto para auditar la totalidad de componentes, confirmando **cero advertencias de tipo `jsx-no-undef`** en todo el árbol de código.
 
-## 4. Evidencias y Pruebas
-Tras las correcciones, se ejecutó la suite de integración completa.
-- **Entorno Local:** `pytest backend/tests` -> 75 PASSED (100% éxito).
-- **Despliegue:** Se generó la imagen multi-etapa y Cloud Run levantó saludablemente (Health Check `ContainerHealthy: True` en 4.5s).
-- El sistema de predicción granular ahora opera sin caídas bajo todas las combinaciones dimensionales válidas e inválidas.
+### 2.2. Implementación de Doble Error Boundary
+Para asegurar que **ningún error en un submódulo vuelva jamás a dejar la aplicación en blanco**:
+1. Se construyó el componente defensivo `frontend/src/components/ErrorBoundary.jsx`.
+2. Se envolvió el componente `<Predictive />` a nivel individual con su propio `<ErrorBoundary fallbackTitle="Error al renderizar Predicción de Demanda">`.
+3. Se envolvió la sección de enrutamiento dinámico en `frontend/src/App.jsx` con un `<ErrorBoundary>` general que preserva la barra lateral de navegación (**Sidebar**) y la cabecera (**Topbar**), permitiendo al usuario reintentar o navegar a otro módulo sin recargar la página.
+
+### 2.3. Formateo y Parseo Seguro de Fechas y Métricas
+Se reemplazó el constructor `new Date(`${value}T00:00:00`)` (vulnerable a strings con horas preexistentes o zonas horarias dispares) por un parser seguro de strings:
+```javascript
+const formatDate = value => {
+  if (!value) return '—';
+  const str = String(value).split('T')[0].split(' ')[0];
+  const parts = str.split('-');
+  if (parts.length === 3) {
+    const [y, m, d] = parts;
+    return `${d}/${m}/${y}`;
+  }
+  return str;
+};
+```
+Asimismo, cada valor numérico en KPIs y tablas se protegió con la función `formatNumber` que intercepta `NaN` y valores nulos/indefinidos, retornando `'0.00'` o `'—'`.
+
+---
+
+## 3. Pruebas y Verificación
+
+1. **Pruebas Unitarias Backend:**
+   - Se añadió la prueba de regresión `test_predictive_forecast_models_evals_included` en `backend/tests/test_api.py`.
+   - **Resultado:** `76 passed in 40.06s` (100% de éxito).
+
+2. **Compilación Frontend:**
+   - `npm run build` ejecutado limpiamente en 684ms. Chunks generados sin warnings de variables no resueltas.
+
+3. **Auditoría de Linter (oxlint):**
+   - Ejecutado sobre `frontend/src/`. Resultado: 0 variables no definidas en JSX.
+
+4. **Despliegue y Health Check en Cloud Run:**
+   - Nueva imagen: `us-central1-docker.pkg.dev/lumina-retail-001/lumina-retail/lumina-api:wap-gold-final-v12`
+   - Revisión: `lumina-retail-00016-wjc`
+   - Estado: `Ready: True`, `ContainerHealthy: True` (arranque del contenedor en 3.78 segundos).
+   - 100% del tráfico asignado a la nueva revisión.
