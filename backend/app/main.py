@@ -385,6 +385,49 @@ def store_performance():
     """, domain_check="commercial")
 
 
+@app.get("/api/commercial/countries")
+def commercial_countries():
+    return execute_query(f"""
+        SELECT
+            source_system,
+            country,
+            orders,
+            gross_sales,
+            currency_code
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_commercial_countries`
+        ORDER BY source_system, gross_sales DESC
+    """, domain_check="commercial")
+
+
+@app.get("/api/commercial/customers_summary")
+def commercial_customers_summary():
+    return execute_query(f"""
+        SELECT
+            source_system,
+            COUNT(DISTINCT customer_id) as total_customers,
+            SUM(orders) as total_orders,
+            SUM(gross_sales) as total_gross_sales,
+            currency_code,
+            ROUND(SUM(gross_sales) / COUNT(DISTINCT customer_id), 2) as avg_sales_per_customer
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_commercial_customers`
+        GROUP BY 1, 5
+        ORDER BY source_system
+    """, domain_check="commercial")
+
+
+@app.get("/api/commercial/cancellations")
+def commercial_cancellations():
+    return execute_query(f"""
+        SELECT
+            source_system,
+            canceled_orders,
+            return_sales,
+            negative_adjustments,
+            currency_code
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_commercial_cancellations`
+        ORDER BY source_system
+    """, domain_check="commercial")
+
 # Frontend React compilado con Vite (Docker: /app/frontend/dist; Local: ../frontend/dist)
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 if not FRONTEND_DIST.exists():

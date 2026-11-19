@@ -21,5 +21,8 @@ export const api = {
   inventoryRisks: () => get('/api/inventory/risks'),
   predictiveMetrics: () => get('/api/predictive/metrics'),
   predictivePredictions: () => get('/api/predictive/predictions'),
-  storePerformance: () => get('/api/store/performance')
+  storePerformance: () => get('/api/store/performance'),
+  countries: () => get('/api/commercial/countries'),
+  customersSummary: () => get('/api/commercial/customers_summary'),
+  cancellations: () => get('/api/commercial/cancellations')
 };
