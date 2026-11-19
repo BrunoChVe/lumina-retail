@@ -17,5 +17,9 @@ export const api = {
   categories: () => get('/api/commercial/categories'),
   products: () => get('/api/commercial/products'),
   logistics: () => get('/api/logistics/summary'),
-  logisticsMonthly: () => get('/api/logistics/monthly')
+  logisticsMonthly: () => get('/api/logistics/monthly'),
+  inventoryCurrent: () => get('/api/inventory/current'),
+  inventoryRisks: () => get('/api/inventory/risks'),
+  predictiveMetrics: () => get('/api/predictive/metrics'),
+  predictivePredictions: () => get('/api/predictive/predictions')
 };

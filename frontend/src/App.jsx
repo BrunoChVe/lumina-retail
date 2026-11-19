@@ -8,12 +8,16 @@ const Overview = lazy(() => import('./pages/Overview'));
 const Commercial = lazy(() => import('./pages/Commercial'));
 const Logistics = lazy(() => import('./pages/Logistics'));
 const Sources = lazy(() => import('./pages/Sources'));
+const Inventory = lazy(() => import('./pages/Inventory'));
+const Predictive = lazy(() => import('./pages/Predictive'));
 
 const titles = {
   overview: 'Resumen ejecutivo',
   commercial: 'Análisis comercial',
   logistics: 'Análisis logístico',
-  sources: 'Fuentes de datos'
+  sources: 'Fuentes de datos',
+  inventory: 'Control de inventario',
+  predictive: 'Predicción de demanda'
 };
 
 export default function App() {
@@ -56,9 +60,11 @@ export default function App() {
             <span className="eyebrow">LUMINA RETAIL / ANALYTICS</span>
             <h1>{titles[active]}</h1>
           </div>
-          <button className="refresh" onClick={loadData}>
-            <RefreshCw size={16}/> Actualizar
-          </button>
+          {active !== 'inventory' && (
+            <button className="refresh" onClick={loadData}>
+              <RefreshCw size={16}/> Actualizar
+            </button>
+          )}
         </header>
 
         {loading ? (
@@ -78,6 +84,8 @@ export default function App() {
             {active === 'commercial' && <Commercial/>}
             {active === 'logistics' && <Logistics/>}
             {active === 'sources' && <Sources/>}
+            {active === 'inventory' && <Inventory/>}
+{active === 'predictive' && <Predictive/>}
           </Suspense>
         )}
 

@@ -1,12 +1,14 @@
 import {
-  LayoutDashboard, ShoppingCart, Truck, Database, Activity
+  LayoutDashboard, ShoppingCart, Truck, Database, Activity, Package, BrainCircuit
 } from 'lucide-react';
 
 const items = [
   { id: 'overview', label: 'Resumen ejecutivo', icon: LayoutDashboard },
   { id: 'commercial', label: 'Comercial', icon: ShoppingCart },
   { id: 'logistics', label: 'Logística', icon: Truck },
-  { id: 'sources', label: 'Fuentes de datos', icon: Database }
+  { id: 'sources', label: 'Fuentes de datos', icon: Database },
+  { id: 'inventory', label: 'Inventario', icon: Package },
+  { id: 'predictive', label: 'Predicción de demanda', icon: BrainCircuit }
 ];
 
 export default function Sidebar({ active, onNavigate }) {

@@ -14,6 +14,13 @@ const sources = [
     currency: 'USD',
     status: 'Moneda confirmada para el proyecto',
     description: 'Datos de comercio electrónico y productos.'
+  },
+  {
+    id: 'uci',
+    name: 'UCI Online Retail',
+    currency: 'GBP',
+    status: 'Moneda documentada',
+    description: 'Transacciones minoristas y mayoristas del Reino Unido y Europa.'
   }
 ];
 
