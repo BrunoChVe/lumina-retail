@@ -9,6 +9,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 
+try:
+    from backend.app.forecasting import get_best_forecast
+except ImportError:
+    from app.forecasting import get_best_forecast
+
 PROJECT_ID = (
     os.getenv("GOOGLE_CLOUD_PROJECT")
     or os.getenv("GCP_PROJECT", "lumina-retail-001")
@@ -713,14 +718,38 @@ def predictive_granular_forecast(
         history_series = [{"semana": str(r["semana"]), "actual": int(r["actual"])} for r in weekly_rows]
         forecast_series = []
         last_date = weekly_rows[-1]["semana"]
-        for h in range(1, safe_horizon + 1):
-            next_date_str = _add_weeks(last_date, h)
-            forecast_series.append({
-                "semana": next_date_str,
-                "prediccion": avg_demand,
-                "lower_bound": max(0.0, round(avg_demand - 1.96 * std_val, 2)),
-                "upper_bound": round(avg_demand + 1.96 * std_val, 2)
-            })
+        
+        best_fcst = get_best_forecast(actuals, safe_horizon)
+        if best_fcst:
+            preds = best_fcst["forecast"]
+            model_name = best_fcst["model"]
+            metrics = best_fcst["evals"][0] if best_fcst.get("evals") else {"mae": round(std_val*0.8, 2), "rmse": std_val, "wape": round(min(100.0, (std_val / avg_demand * 100)), 2) if avg_demand > 0 else 0.0}
+            
+            for h in range(1, safe_horizon + 1):
+                next_date_str = _add_weeks(last_date, h)
+                val = max(0.0, round(preds[h-1], 2))
+                forecast_series.append({
+                    "semana": next_date_str,
+                    "prediccion": val,
+                    "lower_bound": max(0.0, round(val - 1.96 * metrics.get("rmse", std_val), 2)),
+                    "upper_bound": round(val + 1.96 * metrics.get("rmse", std_val), 2)
+                })
+        else:
+            # Fallback a Moving Average Baseline si get_best_forecast no devuelve
+            model_name = "Moving Average Baseline (Intervalo Confianza 95%)"
+            metrics = {
+                "mae": round(std_val * 0.8, 2),
+                "rmse": std_val,
+                "wape": round(min(100.0, (std_val / avg_demand * 100)), 2) if avg_demand > 0 else 0.0
+            }
+            for h in range(1, safe_horizon + 1):
+                next_date_str = _add_weeks(last_date, h)
+                forecast_series.append({
+                    "semana": next_date_str,
+                    "prediccion": avg_demand,
+                    "lower_bound": max(0.0, round(avg_demand - 1.96 * std_val, 2)),
+                    "upper_bound": round(avg_demand + 1.96 * std_val, 2)
+                })
             
         return {
             "source": source,
@@ -732,15 +761,16 @@ def predictive_granular_forecast(
             "avg_demand": avg_demand,
             "variability_std": std_val,
             "trend": trend,
-            "model_name": "Moving Average Baseline (Intervalo Confianza 95%)",
+            "model_name": model_name,
             "metrics": {
-                "MAE": round(std_val * 0.8, 2),
-                "RMSE": std_val,
-                "WAPE": round(min(100.0, (std_val / avg_demand * 100)), 2) if avg_demand > 0 else 0.0
+                "MAE": metrics.get("mae", 0.0),
+                "RMSE": metrics.get("rmse", 0.0),
+                "WAPE": metrics.get("wape", 0.0)
             },
-            "history": history_series[-26:],
+            "models_evals": best_fcst.get("evals", []) if best_fcst else [],
+            "history": history_series,
             "forecast": forecast_series,
-            "note": "Pronóstico de demanda por vendedor/producto basado en historial empírico. Se requiere un mínimo de 10 semanas activas."
+            "note": "El pronóstico granular evalúa dinámicamente varios modelos estadísticos seleccionando el de menor WAPE por validación temporal (holdout)."
         }
         
     # Caso 3: UCI por País / Producto
@@ -782,14 +812,38 @@ def predictive_granular_forecast(
         history_series = [{"semana": str(r["semana"]), "actual": int(r["actual"])} for r in weekly_rows]
         forecast_series = []
         last_date = weekly_rows[-1]["semana"]
-        for h in range(1, safe_horizon + 1):
-            next_date_str = _add_weeks(last_date, h)
-            forecast_series.append({
-                "semana": next_date_str,
-                "prediccion": avg_demand,
-                "lower_bound": max(0.0, round(avg_demand - 1.96 * std_val, 2)),
-                "upper_bound": round(avg_demand + 1.96 * std_val, 2)
-            })
+        
+        best_fcst = get_best_forecast(actuals, safe_horizon)
+        if best_fcst:
+            preds = best_fcst["forecast"]
+            model_name = best_fcst["model"]
+            metrics = best_fcst["evals"][0] if best_fcst.get("evals") else {"mae": round(std_val*0.8, 2), "rmse": std_val, "wape": round(min(100.0, (std_val / avg_demand * 100)), 2) if avg_demand > 0 else 0.0}
+            
+            for h in range(1, safe_horizon + 1):
+                next_date_str = _add_weeks(last_date, h)
+                val = max(0.0, round(preds[h-1], 2))
+                forecast_series.append({
+                    "semana": next_date_str,
+                    "prediccion": val,
+                    "lower_bound": max(0.0, round(val - 1.96 * metrics.get("rmse", std_val), 2)),
+                    "upper_bound": round(val + 1.96 * metrics.get("rmse", std_val), 2)
+                })
+        else:
+            # Fallback a Moving Average Baseline si get_best_forecast no devuelve
+            model_name = "Persistencia de Demanda Transaccional UCI"
+            metrics = {
+                "mae": round(std_val * 0.8, 2),
+                "rmse": std_val,
+                "wape": round(min(100.0, (std_val / avg_demand * 100)), 2) if avg_demand > 0 else 0.0
+            }
+            for h in range(1, safe_horizon + 1):
+                next_date_str = _add_weeks(last_date, h)
+                forecast_series.append({
+                    "semana": next_date_str,
+                    "prediccion": avg_demand,
+                    "lower_bound": max(0.0, round(avg_demand - 1.96 * std_val, 2)),
+                    "upper_bound": round(avg_demand + 1.96 * std_val, 2)
+                })
             
         return {
             "source": "uci",
@@ -801,15 +855,16 @@ def predictive_granular_forecast(
             "avg_demand": avg_demand,
             "variability_std": std_val,
             "trend": trend,
-            "model_name": "Persistencia de Demanda Transaccional UCI",
+            "model_name": model_name,
             "metrics": {
-                "MAE": round(std_val * 0.8, 2),
-                "RMSE": std_val,
-                "WAPE": round(min(100.0, (std_val / avg_demand * 100)), 2) if avg_demand > 0 else 0.0
+                "MAE": metrics.get("mae", 0.0),
+                "RMSE": metrics.get("rmse", 0.0),
+                "WAPE": metrics.get("wape", 0.0)
             },
+            "models_evals": best_fcst.get("evals", []) if best_fcst else [],
             "history": history_series,
             "forecast": forecast_series,
-            "note": "UCI Online Retail no cuenta con modelo estacional entrenado. El pronóstico es una proyección empírica."
+            "note": "UCI Online Retail: El pronóstico evalúa dinámicamente varios modelos estadísticos para adaptarse a la volatilidad de la serie."
         }
         
     # Caso 4: TheLook eCommerce
@@ -940,7 +995,7 @@ def commercial_cancellations():
 # ==============================================================================
 
 try:
-    from app.simulation_engine import (
+    from backend.app.simulation_engine import (
         get_available_modalities,
         get_infrastructure_status,
         validate_simulation_config,
@@ -951,7 +1006,7 @@ try:
         cancel_simulation_run
     )
 except ImportError:
-    from backend.app.simulation_engine import (
+    from app.simulation_engine import (
         get_available_modalities,
         get_infrastructure_status,
         validate_simulation_config,

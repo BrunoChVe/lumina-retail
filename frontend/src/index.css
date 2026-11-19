@@ -545,3 +545,37 @@ footer {
   background: rgba(139, 92, 246, 0.1);
   color: #c084fc;
 }
+
+/* Print Styles for PDF Export */
+@media print {
+  body { background: white !important; color: black !important; }
+  .sidebar, .topbar, .wap-release-banner, button, .inventory-heading label, select, input { display: none !important; }
+  .main { margin: 0 !important; padding: 0 !important; width: 100% !important; overflow: visible !important; }
+  .panel { background: white !important; border: 1px solid #ccc !important; color: black !important; break-inside: avoid; page-break-inside: avoid; margin-bottom: 20px !important; padding: 15px !important; }
+  .panel * { color: black !important; }
+  h1, h2, h3, h4, strong, span { color: black !important; }
+  .muted, small { color: #555 !important; }
+  .chart-box { page-break-inside: avoid; }
+  .kpi-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+  .kpi { width: 30%; border: 1px solid #ccc !important; background: #fff !important; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #ccc !important; padding: 8px !important; color: black !important; }
+  th { background: #f0f0f0 !important; font-weight: bold !important; }
+  
+  /* Force charts to render cleanly */
+  .recharts-wrapper * { stroke: black !important; }
+  .recharts-text { fill: black !important; }
+  .recharts-cartesian-grid-horizontal line, .recharts-cartesian-grid-vertical line { stroke: #ccc !important; }
+  
+  /* Add custom header for PDF */
+  .main::before {
+    content: "LUMINA Retail - Informe Profesional de Predicción de Demanda";
+    display: block;
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    text-align: center;
+    border-bottom: 2px solid black;
+    padding-bottom: 10px;
+  }
+}
