@@ -8,8 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 
-PROJECT_ID = os.getenv("GCP_PROJECT", "lumina-retail-001")
-DATASET = "lumina_stage"
+PROJECT_ID = (
+    os.getenv("GOOGLE_CLOUD_PROJECT")
+    or os.getenv("GCP_PROJECT", "lumina-retail-001")
+)
+DATASET = os.getenv("BQ_DATASET") or os.getenv("DATASET", "lumina_stage")
+STREAMING_DATASET = os.getenv("STREAMING_DATASET", "lumina_streaming")
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -21,7 +25,7 @@ app = FastAPI(
 
 origins = os.getenv(
     "FRONTEND_ORIGINS",
-    "http://localhost:5173"
+    "http://localhost:5173,http://localhost:8080,http://127.0.0.1:5173,http://127.0.0.1:8080"
 ).split(",")
 
 app.add_middleware(
@@ -55,7 +59,13 @@ def execute_query(sql):
 
 @app.get("/api/health")
 def health():
-    return {"status": "healthy", "project": PROJECT_ID}
+    return {
+        "status": "healthy",
+        "project": PROJECT_ID,
+        "dataset": DATASET,
+        "streaming_dataset": STREAMING_DATASET,
+        "frontend_mounted": FRONTEND_DIST.exists()
+    }
 
 
 @app.get("/api/commercial/summary")
@@ -139,8 +149,11 @@ def logistics_summary():
                 ) * 100
                 ELSE NULL
             END AS late_delivery_rate_pct,
-            STRING_AGG(DISTINCT late_delivery_data_status)
-                AS late_delivery_data_status
+            CASE
+                WHEN COUNTIF(late_delivery_data_status = 'available') > 0
+                THEN 'available'
+                ELSE 'not_available'
+            END AS late_delivery_data_status
         FROM `{PROJECT_ID}.{DATASET}.vw_logistics_dashboard_final_v1`
         GROUP BY source_system, source_label
         ORDER BY source_system
@@ -156,8 +169,98 @@ def logistics_monthly():
     """)
 
 
-# Frontend React compilado con Vite
+
+@app.get("/api/inventory/current")
+def inventory_current():
+    return execute_query(f"""
+        SELECT
+            product_id,
+            region,
+            stock_registrado,
+            fecha_ultimo_evento,
+            fecha_procesamiento,
+            minutos_desde_evento,
+            estado_frescura,
+            CASE
+                WHEN stock_registrado < 10 THEN 'CRITICO'
+                WHEN stock_registrado <= 20 THEN 'BAJO'
+                ELSE 'NORMAL'
+            END AS estado_stock
+        FROM `{PROJECT_ID}.{STREAMING_DATASET}.stock_actual_vw`
+        WHERE (region IS NULL OR region != 'CYBER_TEST')
+        ORDER BY stock_registrado ASC, product_id, region
+    """)
+
+
+@app.get("/api/inventory/risks")
+def inventory_risks():
+    return execute_query(f"""
+        SELECT
+            product_id,
+            region,
+            total_eventos,
+            stock_promedio,
+            stock_minimo,
+            stock_maximo,
+            alertas_criticas,
+            eventos_stock_bajo,
+            porcentaje_alertas
+        FROM `{PROJECT_ID}.{STREAMING_DATASET}.stock_risk_by_product_region`
+        WHERE (region IS NULL OR region != 'CYBER_TEST')
+        ORDER BY alertas_criticas DESC, stock_minimo ASC
+    """)
+
+
+
+@app.get("/api/predictive/metrics")
+def predictive_metrics():
+    return execute_query(f"""
+        SELECT
+            run_id,
+            model_name,
+            metric,
+            value,
+            target,
+            split_start,
+            split_end,
+            n_test_rows,
+            evaluated_at,
+            evaluation_type
+        FROM `{PROJECT_ID}.{DATASET}.model_evaluation_metrics`
+        WHERE run_id = (
+            SELECT run_id
+            FROM `{PROJECT_ID}.{DATASET}.model_evaluation_metrics`
+            ORDER BY evaluated_at DESC
+            LIMIT 1
+        )
+        ORDER BY metric
+    """)
+
+
+@app.get("/api/predictive/predictions")
+def predictive_predictions():
+    return execute_query(f"""
+        SELECT
+            semana,
+            categoria,
+            actual,
+            prediccion,
+            error_absoluto
+        FROM `{PROJECT_ID}.{DATASET}.model_evaluation_predictions`
+        WHERE run_id = (
+            SELECT run_id
+            FROM `{PROJECT_ID}.{DATASET}.model_evaluation_metrics`
+            ORDER BY evaluated_at DESC
+            LIMIT 1
+        )
+        ORDER BY semana, categoria
+    """)
+
+
+# Frontend React compilado con Vite (Docker: /app/frontend/dist; Local: ../frontend/dist)
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+if not FRONTEND_DIST.exists():
+    FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 if FRONTEND_DIST.exists():
     app.mount(
