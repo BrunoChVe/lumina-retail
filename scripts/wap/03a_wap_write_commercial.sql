@@ -73,19 +73,48 @@ BEGIN
       category_rank, items_sold, distinct_products, orders, total_sales, avg_item_price, sales_share_pct
     )
     SELECT 
-      @run_id, @publish_date, source_system, currency_code, "Standard" AS category_type, category, category_rank, items_sold, distinct_products, orders, total_sales, avg_item_price, sales_share_pct
+      @run_id, @publish_date, source_system, currency_code, "SOURCE_NATIVE" AS category_type, category, category_rank, items_sold, distinct_products, orders, total_sales, avg_item_price, sales_share_pct
     FROM `lumina-retail-001.lumina_stage.vw_commercial_category_performance_v1`
     UNION ALL
     SELECT 
-      @run_id, @publish_date, "uci" AS source_system, "GBP" AS currency_code, "No_Taxonomy" AS category_type, CAST(NULL AS STRING) AS category, 1 AS category_rank, 
-      SUM(quantity) AS items_sold, 
-      COUNT(DISTINCT source_product_id) AS distinct_products, 
-      COUNT(DISTINCT source_order_id) AS orders, 
-      ROUND(SUM(gross_sales_gbp), 2) AS total_sales, 
-      ROUND(SAFE_DIVIDE(SUM(gross_sales_gbp), NULLIF(SUM(quantity), 0)), 2) AS avg_item_price, 
-      100.0 AS sales_share_pct
-    FROM `lumina-retail-001.lumina_stage.stg_uci_online_retail` 
-    WHERE quantity > 0;
+      @run_id, 
+      @publish_date, 
+      "uci" AS source_system, 
+      "GBP" AS currency_code, 
+      category_type, 
+      category, 
+      DENSE_RANK() OVER (ORDER BY total_sales DESC) AS category_rank, 
+      items_sold, 
+      distinct_products, 
+      orders, 
+      total_sales, 
+      avg_item_price, 
+      ROUND(SAFE_DIVIDE(total_sales, SUM(total_sales) OVER ()) * 100, 2) AS sales_share_pct
+    FROM (
+      SELECT 
+        CASE
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(POSTAGE|MANUAL|CARRIAGE|DISCOUNT|FEE)') THEN 'Postage & Fees'
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(CAKE|BAKING|TEA|MUG|COFFEE|PLATE|BOWL|KITCHEN|CUTLERY|JUG|PANTRY|JAM|JAR|GLASS|BOTTLE|LUNCH BOX|LUNCH BAG|FORK|SPOON|DISH|COOK)') THEN 'Kitchen & Dining'
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(LIGHT|LAMP|CANDLE|T-LIGHT|HOLDER|FRAME|CLOCK|MIRROR|WALL|DOORMAT|SIGN|CUSHION|ORNAMENT|DECORATION|CHANDELIER)') THEN 'Home Decor & Lighting'
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(CHRISTMAS|XMAS|PARTY|BUNTING|BALLOON|EASTER|HALLOWEEN|SNOWFLAKE|BIRTHDAY|GARLAND)') THEN 'Seasonal & Party'
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(BAG|PURSE|WALLET|TOTE|SHOPPER|SUITCASE|LUGGAGE|BACKPACK)') THEN 'Bags & Luggage'
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(PAPER|CARD|NOTEBOOK|PEN|PENCIL|STICKER|CRAFT|RIBBON|WRAP|ALBUM|BOOK)') THEN 'Stationery & Crafts'
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(HEART|RETROSPOT|VINTAGE|TOY|GAME|PLUSH|TEDDY|TRINKET|DOLL|MAGIC|PUZZLE)') THEN 'Gifts & Toys'
+          ELSE 'Unclassified'
+        END AS category,
+        CASE
+          WHEN REGEXP_CONTAINS(UPPER(product_name), r'(POSTAGE|MANUAL|CARRIAGE|DISCOUNT|FEE|CAKE|BAKING|TEA|MUG|COFFEE|PLATE|BOWL|KITCHEN|CUTLERY|JUG|PANTRY|JAM|JAR|GLASS|BOTTLE|LUNCH BOX|LUNCH BAG|FORK|SPOON|DISH|COOK|LIGHT|LAMP|CANDLE|T-LIGHT|HOLDER|FRAME|CLOCK|MIRROR|WALL|DOORMAT|SIGN|CUSHION|ORNAMENT|DECORATION|CHANDELIER|CHRISTMAS|XMAS|PARTY|BUNTING|BALLOON|EASTER|HALLOWEEN|SNOWFLAKE|BIRTHDAY|GARLAND|BAG|PURSE|WALLET|TOTE|SHOPPER|SUITCASE|LUGGAGE|BACKPACK|PAPER|CARD|NOTEBOOK|PEN|PENCIL|STICKER|CRAFT|RIBBON|WRAP|ALBUM|BOOK|HEART|RETROSPOT|VINTAGE|TOY|GAME|PLUSH|TEDDY|TRINKET|DOLL|MAGIC|PUZZLE)') THEN 'DERIVED_RULE'
+          ELSE 'UNCLASSIFIED'
+        END AS category_type,
+        SUM(quantity) AS items_sold,
+        COUNT(DISTINCT source_product_id) AS distinct_products,
+        COUNT(DISTINCT source_order_id) AS orders,
+        ROUND(SUM(gross_sales_gbp), 2) AS total_sales,
+        ROUND(SAFE_DIVIDE(SUM(gross_sales_gbp), NULLIF(SUM(quantity), 0)), 2) AS avg_item_price
+      FROM `lumina-retail-001.lumina_stage.stg_uci_online_retail`
+      WHERE quantity > 0
+      GROUP BY 1, 2
+    );
 
     INSERT INTO `lumina-retail-001.lumina_sandbox.gold_execution_history` 
       (event_id, run_id, event_sequence, operation_type, domain, event_type, event_timestamp, operator, input_fingerprint, details)
@@ -103,7 +132,18 @@ BEGIN
     UNION ALL
     SELECT 
       @run_id, @publish_date, "uci" AS source_system, "GBP" AS currency_code, source_product_id, product_name, 
-      CAST(NULL AS STRING) AS category, CAST(NULL AS STRING) AS brand, CAST(NULL AS STRING) AS department, 
+      CASE
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(POSTAGE|MANUAL|CARRIAGE|DISCOUNT|FEE)') THEN 'Postage & Fees'
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(CAKE|BAKING|TEA|MUG|COFFEE|PLATE|BOWL|KITCHEN|CUTLERY|JUG|PANTRY|JAM|JAR|GLASS|BOTTLE|LUNCH BOX|LUNCH BAG|FORK|SPOON|DISH|COOK)') THEN 'Kitchen & Dining'
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(LIGHT|LAMP|CANDLE|T-LIGHT|HOLDER|FRAME|CLOCK|MIRROR|WALL|DOORMAT|SIGN|CUSHION|ORNAMENT|DECORATION|CHANDELIER)') THEN 'Home Decor & Lighting'
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(CHRISTMAS|XMAS|PARTY|BUNTING|BALLOON|EASTER|HALLOWEEN|SNOWFLAKE|BIRTHDAY|GARLAND)') THEN 'Seasonal & Party'
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(BAG|PURSE|WALLET|TOTE|SHOPPER|SUITCASE|LUGGAGE|BACKPACK)') THEN 'Bags & Luggage'
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(PAPER|CARD|NOTEBOOK|PEN|PENCIL|STICKER|CRAFT|RIBBON|WRAP|ALBUM|BOOK)') THEN 'Stationery & Crafts'
+        WHEN REGEXP_CONTAINS(UPPER(product_name), r'(HEART|RETROSPOT|VINTAGE|TOY|GAME|PLUSH|TEDDY|TRINKET|DOLL|MAGIC|PUZZLE)') THEN 'Gifts & Toys'
+        ELSE 'Unclassified'
+      END AS category, 
+      CAST(NULL AS STRING) AS brand, 
+      CAST(NULL AS STRING) AS department, 
       SUM(quantity) AS items_sold, 
       COUNT(DISTINCT source_order_id) AS orders, 
       ROUND(SUM(gross_sales_gbp), 2) AS total_sales, 

@@ -49,7 +49,7 @@ BEGIN
   );
 
   -- TEST 4: TEST_COMM_UCI_NO_INVENTED_CATEGORIES
-  -- Comprueba que UCI no tenga categorías inventadas (debe ser NULL)
+  -- Comprueba que UCI no tenga categorías inventadas o arbitrarias; solo se admiten DERIVED_RULE y UNCLASSIFIED del catálogo oficial documentado
   INSERT INTO `lumina-retail-001.lumina_sandbox.gold_audit_results` (event_id, run_id, domain, audit_timestamp, test_name, passed, details)
   SELECT 
     GENERATE_UUID(), @run_id, "commercial", @audit_timestamp, "TEST_COMM_UCI_NO_INVENTED_CATEGORIES",
@@ -58,7 +58,20 @@ BEGIN
   FROM `lumina-retail-001.lumina_sandbox.gold_commercial_categories`
   WHERE run_id = @run_id 
     AND source_system = "uci" 
-    AND category IS NOT NULL;
+    AND (
+      category IS NULL 
+      OR category NOT IN (
+        'Kitchen & Dining', 
+        'Home Decor & Lighting', 
+        'Gifts & Toys', 
+        'Bags & Luggage', 
+        'Stationery & Crafts', 
+        'Seasonal & Party', 
+        'Postage & Fees', 
+        'Unclassified'
+      )
+      OR category_type NOT IN ('DERIVED_RULE', 'UNCLASSIFIED')
+    );
 
   -- TEST 5: TEST_COMM_UCI_GRANULARITY_AND_PRESERVATION
   -- Comprueba preservación 1:1 de descripciones y unidades vendidas de UCI sin centinelas, null-safe nativo

@@ -53,7 +53,7 @@ export default function Commercial() {
         <div className="section-heading">
           <div>
             <h2>Rendimiento por categoría</h2>
-            <p>Participación y ventas por categoría de producto</p>
+            <p>Participación y ventas por categoría de producto con aislamiento estricto de divisas</p>
           </div>
         </div>
 
@@ -78,18 +78,94 @@ export default function Commercial() {
             uci: 'GBP'
           };
 
+          const totalSourceSales = rows.reduce((sum, r) => sum + Number(r.total_sales || 0), 0);
+
           return (
-            <div className="chart-section" key={s}>
-              <h3>{sourceNames[s]}</h3>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={rows.slice(0, 10)} layout="vertical" margin={{left: 20}}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
-                  <XAxis type="number"/>
-                  <YAxis type="category" dataKey="category" width={145} tick={{fontSize: 11}}/>
-                  <Tooltip formatter={v => currency(v, sourceCurrencies[s])}/>
-                  <Bar dataKey="total_sales" fill={sourceColors[s]} radius={[0,4,4,0]}/>
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="chart-section" key={s} style={{ marginBottom: 36, paddingBottom: 24, borderBottom: '1px solid #1e293b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ margin: 0, color: sourceColors[s], fontSize: 16 }}>{sourceNames[s]}</h3>
+                  <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                    {rows.length} categorías registradas · Ventas totales: <strong>{currency(totalSourceSales, sourceCurrencies[s])}</strong>
+                  </span>
+                </div>
+                {s === 'uci' && (
+                  <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+                    <span style={{ background: '#0284c722', color: '#38bdf8', padding: '3px 8px', borderRadius: 4, border: '1px solid #0284c744' }}>
+                      ● 7 Categorías Derivadas (Reglas de Descripción)
+                    </span>
+                    <span style={{ background: '#f59e0b22', color: '#fbbf24', padding: '3px 8px', borderRadius: 4, border: '1px solid #f59e0b44' }}>
+                      ▲ 1 Sin Clasificar (Unclassified: 18.32%)
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {rows.length === 0 ? (
+                <div style={{ padding: 24, color: '#64748b', fontStyle: 'italic', background: '#0b1120', borderRadius: 8 }}>
+                  No hay datos comerciales disponibles para {sourceNames[s]}.
+                </div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={Math.max(220, Math.min(rows.length * 32 + 40, 360))}>
+                    <BarChart data={rows.slice(0, 10)} layout="vertical" margin={{left: 25, right: 30, top: 10, bottom: 10}}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
+                      <XAxis type="number" tickFormatter={v => currency(v, sourceCurrencies[s])}/>
+                      <YAxis type="category" dataKey="category" width={160} tick={{fontSize: 11}}/>
+                      <Tooltip 
+                        formatter={(val, name, item) => [
+                          `${currency(val, sourceCurrencies[s])} (${item.payload.sales_share_pct || 0}%)`,
+                          `Ventas [${item.payload.category_origin || item.payload.category_type || 'Nativo'}]`
+                        ]}
+                      />
+                      <Bar dataKey="total_sales" fill={sourceColors[s]} radius={[0,4,4,0]}/>
+                    </BarChart>
+                  </ResponsiveContainer>
+
+                  {s === 'uci' && (
+                    <div className="table-wrap" style={{ marginTop: 16 }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Rank</th>
+                            <th>Categoría</th>
+                            <th>Origen Taxonomía</th>
+                            <th>Unidades Vendidas</th>
+                            <th>Productos Únicos</th>
+                            <th>Ventas Totales</th>
+                            <th>Participación</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.category}>
+                              <td>#{r.category_rank}</td>
+                              <td style={{ fontWeight: 600 }}>{r.category}</td>
+                              <td>
+                                <span style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                  background: r.category_origin === 'DERIVED_RULE' ? '#0284c722' : '#f59e0b22',
+                                  color: r.category_origin === 'DERIVED_RULE' ? '#38bdf8' : '#fbbf24',
+                                  border: `1px solid ${r.category_origin === 'DERIVED_RULE' ? '#0284c744' : '#f59e0b44'}`
+                                }}>
+                                  {r.category_origin || r.category_type}
+                                </span>
+                              </td>
+                              <td>{Number(r.items_sold).toLocaleString()}</td>
+                              <td>{Number(r.distinct_products).toLocaleString()}</td>
+                              <td style={{ fontWeight: 600, color: '#f8fafc' }}>{currency(r.total_sales, 'GBP')}</td>
+                              <td><strong style={{ color: '#a78bfa' }}>{r.sales_share_pct}%</strong></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           );
         })}

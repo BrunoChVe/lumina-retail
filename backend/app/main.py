@@ -146,7 +146,9 @@ def commercial_categories():
         SELECT
             source_system,
             currency_code,
-            category,
+            category_type,
+            category_type AS category_origin,
+            COALESCE(category, 'Unclassified') AS category,
             category_rank,
             items_sold,
             distinct_products,
@@ -172,7 +174,7 @@ def commercial_products():
             source_system,
             source_product_id,
             product_name,
-            category,
+            COALESCE(category, 'Unclassified') AS category,
             brand,
             department,
             items_sold,
@@ -361,6 +363,26 @@ def predictive_predictions():
         )
         ORDER BY semana, categoria
     """, domain_check="predictive")
+
+
+@app.get("/api/store/performance")
+def store_performance():
+    return execute_query(f"""
+        SELECT
+            p.store_id,
+            d.store_name,
+            d.location,
+            p.order_month,
+            p.currency_code,
+            p.total_orders,
+            p.completed_orders,
+            p.gross_sales,
+            p.net_sales,
+            p.total_returns
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_store_commercial_performance` p
+        JOIN `{PROJECT_ID}.{WAP_DATASET}.vw_store_dimension` d ON p.store_id = d.store_id
+        ORDER BY p.order_month, p.store_id
+    """, domain_check="commercial")
 
 
 # Frontend React compilado con Vite (Docker: /app/frontend/dist; Local: ../frontend/dist)

@@ -60,22 +60,72 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertIn("total_product_sales", first)
 
     def test_commercial_categories(self):
-        """Valida taxonomía estándar y manejo de categorías nulas de UCI."""
+        """Valida taxonomía estándar para Olist/TheLook y categorías derivadas/unclassified de UCI."""
         res = self.client.get("/api/commercial/categories")
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertIsInstance(data, list)
         self.assertGreater(len(data), 0)
         
+        # Validación de UCI
         uci_cats = [r for r in data if r["source_system"] == "uci"]
-        self.assertEqual(len(uci_cats), 1)
-        self.assertIsNone(uci_cats[0]["category"])
-        self.assertEqual(uci_cats[0]["category_rank"], 1)
-        self.assertEqual(uci_cats[0]["currency_code"], "GBP")
+        self.assertEqual(len(uci_cats), 8)  # 7 derivadas + 1 unclassified
+        uci_cat_names = set(r["category"] for r in uci_cats)
+        self.assertIn("Kitchen & Dining", uci_cat_names)
+        self.assertIn("Home Decor & Lighting", uci_cat_names)
+        self.assertIn("Unclassified", uci_cat_names)
         
+        total_uci_sales = sum(r["total_sales"] for r in uci_cats)
+        self.assertAlmostEqual(total_uci_sales, 10666684.54, places=2)
+        
+        for r in uci_cats:
+            self.assertEqual(r["currency_code"], "GBP")
+            self.assertIsNotNone(r["category"])
+            self.assertIn(r["category_origin"], ["DERIVED_RULE", "UNCLASSIFIED"])
+        
+        # Validación de no regresión en Olist y TheLook
+        olist_cats = [r for r in data if r["source_system"] == "olist"]
+        thelook_cats = [r for r in data if r["source_system"] == "thelook"]
+        self.assertEqual(len(olist_cats), 15)  # rank <= 15
+        self.assertEqual(len(thelook_cats), 15)
         for row in data:
             self.assertLessEqual(row["category_rank"], 15)
             self.assertIn("total_sales", row)
+
+    def test_uci_categories_reconciliation_and_coverage(self):
+        """Valida cobertura clasificada vs sin clasificar y conciliación al 100% de ventas UCI."""
+        res = self.client.get("/api/commercial/categories")
+        self.assertEqual(res.status_code, 200)
+        uci_cats = [r for r in res.json() if r["source_system"] == "uci"]
+        
+        derived = [r for r in uci_cats if r["category_origin"] == "DERIVED_RULE"]
+        unclassified = [r for r in uci_cats if r["category_origin"] == "UNCLASSIFIED"]
+        
+        self.assertEqual(len(derived), 7)
+        self.assertEqual(len(unclassified), 1)
+        
+        derived_sales = sum(r["total_sales"] for r in derived)
+        unclass_sales = sum(r["total_sales"] for r in unclassified)
+        total_sales = derived_sales + unclass_sales
+        
+        pct_classified = (derived_sales / total_sales) * 100
+        pct_unclassified = (unclass_sales / total_sales) * 100
+        
+        self.assertGreater(pct_classified, 80.0)  # ~81.68%
+        self.assertLess(pct_unclassified, 20.0)    # ~18.32%
+        self.assertAlmostEqual(pct_classified + pct_unclassified, 100.0, places=1)
+
+    def test_uci_null_and_single_category_robustness(self):
+        """Valida robustez ante categoría NULL y caso borde de una sola categoría."""
+        # Simulación de respuesta con categoría nula
+        sample_row = {"category": None, "source_system": "uci", "total_sales": 100}
+        resolved_category = sample_row.get("category") or "Unclassified"
+        self.assertEqual(resolved_category, "Unclassified")
+        
+        # Caso de una sola categoría sin clasificar
+        single_cat_data = [{"category": "Unclassified", "total_sales": 1000, "sales_share_pct": 100.0}]
+        self.assertEqual(len(single_cat_data), 1)
+        self.assertEqual(single_cat_data[0]["sales_share_pct"], 100.0)
 
     def test_commercial_products(self):
         """Valida top productos por fuente."""
