@@ -2,29 +2,37 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, BarChart, Bar
+  CartesianGrid, Tooltip, Legend
 } from 'recharts';
 import {
-  Target, Activity, TrendingUp, Database, Filter, Store,
-  Package, AlertTriangle, CheckCircle2, Info, FileText, Download, Zap
+  Database, AlertTriangle, Info, FileText, Zap, Search, RefreshCw
 } from 'lucide-react';
+import ErrorBoundary from '../components/ErrorBoundary';
 
-const formatNumber = value =>
-  Number(value || 0).toLocaleString('es-PE', {
+const formatNumber = value => {
+  const num = Number(value);
+  if (isNaN(num)) return '0.00';
+  return num.toLocaleString('es-PE', {
     maximumFractionDigits: 2
   });
+};
 
-const formatDate = value =>
-  value
-    ? new Date(`${value}T00:00:00`).toLocaleDateString('es-PE')
-    : '—';
+const formatDate = value => {
+  if (!value) return '—';
+  const str = String(value).split('T')[0].split(' ')[0];
+  const parts = str.split('-');
+  if (parts.length === 3) {
+    const [y, m, d] = parts;
+    return `${d}/${m}/${y}`;
+  }
+  return str;
+};
 
-export default function Predictive() {
+function PredictiveContent() {
   const [metrics, setMetrics] = useState([]);
-  const [predictions, setPredictions] = useState([]);
   const [metadataList, setMetadataList] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [pageError, setPageError] = useState('');
 
   // Filtros interactivos para pronóstico granular
   const [selectedSource, setSelectedSource] = useState('olist');
@@ -45,56 +53,81 @@ export default function Predictive() {
 
   // 1. Cargar métricas globales de Gold WAP y metadatos de fuentes
   useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    setPageError('');
+
     Promise.all([
-      api.predictiveMetrics().catch(() => []),
-      api.predictivePredictions().catch(() => []),
-      api.predictiveMetadata().catch(() => null)
+      api.predictiveMetrics().catch(err => {
+        console.warn('Fallo al obtener métricas predictivas:', err);
+        return [];
+      }),
+      api.predictiveMetadata().catch(err => {
+        console.warn('Fallo al obtener metadatos predictivos:', err);
+        return null;
+      })
     ])
-      .then(([m, p, meta]) => {
-        setMetrics(m || []);
-        setPredictions(p || []);
+      .then(([m, meta]) => {
+        if (!mounted) return;
+        setMetrics(Array.isArray(m) ? m : []);
         setMetadataList(meta);
-        if (meta && meta.top_sellers && meta.top_sellers.length > 0) {
+        if (meta?.top_sellers?.length > 0) {
           setSelectedSeller(meta.top_sellers[0].seller_id);
         }
-        if (meta && meta.top_products && meta.top_products.length > 0) {
+        if (meta?.top_products?.length > 0) {
           setSelectedProduct(meta.top_products[0].product_id);
         }
       })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch(e => {
+        if (mounted) setPageError(e.message || 'Error cargando datos iniciales.');
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+
+    return () => { mounted = false; };
   }, []);
 
   // 2. Cargar pronóstico granular cada vez que cambien los filtros
   useEffect(() => {
+    let mounted = true;
     setLoadingForecast(true);
-    setCurrentStock(null); // Resetear evaluación de inventario al cambiar contexto
+    setCurrentStock(null);
+
     const params = {
-      source: selectedSource,
-      horizon: selectedHorizon
+      source: selectedSource || 'olist',
+      horizon: Number(selectedHorizon) || 12
     };
 
     if (selectedSource === 'olist') {
       if (granularityMode === 'category') {
-        params.category = selectedCategory;
+        params.category = selectedCategory || 'bed_bath_table';
       } else {
-        params.sellerId = selectedSeller;
-        params.productId = selectedProduct;
+        if (selectedSeller) params.sellerId = selectedSeller;
+        if (selectedProduct) params.productId = selectedProduct;
       }
     } else if (selectedSource === 'uci') {
-      params.country = selectedCountry;
-      params.productId = selectedProduct;
+      params.country = selectedCountry || 'United Kingdom';
+      if (selectedProduct) params.productId = selectedProduct;
     }
 
     api.predictiveForecast(params)
-      .then(res => setForecastResult(res))
-      .catch(err => {
-        setForecastResult({
-          sufficient_history: false,
-          reason: err.message || 'Error al consultar pronóstico granular.'
-        });
+      .then(res => {
+        if (mounted) setForecastResult(res || null);
       })
-      .finally(() => setLoadingForecast(false));
+      .catch(err => {
+        if (mounted) {
+          setForecastResult({
+            sufficient_history: false,
+            reason: err.message || 'Error al consultar pronóstico granular.'
+          });
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoadingForecast(false);
+      });
+
+    return () => { mounted = false; };
   }, [selectedSource, granularityMode, selectedCategory, selectedSeller, selectedProduct, selectedCountry, selectedHorizon]);
 
   // Función para evaluar impacto en el inventario real (Integración Cyber Days)
@@ -102,29 +135,21 @@ export default function Predictive() {
     if (!forecastResult || !forecastResult.sufficient_history) return;
     setEvaluatingStock(true);
     try {
-      // Buscar el stock de este producto en el endpoint de inventario operativo
-      // Como Olist y UCI tienen catálogos distintos, en la simulación pedimos el inventario actual
-      // Para Olist: usamos selectedProduct. Para UCI: selectedProduct (StockCode)
       const targetProduct = selectedProduct;
       const stockRes = await api.inventoryCurrent(false, 'ALL', targetProduct);
       
-      if (stockRes && stockRes.length > 0) {
-        // Sumar el stock registrado en todas las regiones operativas para ese producto
+      if (Array.isArray(stockRes) && stockRes.length > 0) {
         const totalStock = stockRes.reduce((acc, row) => acc + Number(row.stock_registrado || 0), 0);
         setCurrentStock(totalStock);
       } else {
-        // Producto no tiene inventario operativo registrado (Ej. en TheLook o UCI sin stock real)
         setCurrentStock(0);
       }
-    } catch (e) {
+    } catch {
       setCurrentStock(0);
     } finally {
       setEvaluatingStock(false);
     }
   };
-
-  const metric = name =>
-    metrics.find(item => item.metric === name)?.value;
 
   const metadata = metrics[0] || {};
 
@@ -133,13 +158,13 @@ export default function Predictive() {
     if (!forecastResult) return [];
     const points = [];
 
-    // Puntos históricos
-    if (forecastResult.history) {
+    if (Array.isArray(forecastResult.history)) {
       forecastResult.history.forEach(h => {
+        if (!h || !h.semana) return;
         points.push({
-          semana: h.semana,
+          semana: String(h.semana),
           semanaLabel: formatDate(h.semana),
-          actual: h.actual,
+          actual: Number(h.actual) || 0,
           prediccion: null,
           lower_bound: null,
           upper_bound: null
@@ -147,22 +172,23 @@ export default function Predictive() {
       });
     }
 
-    // Puntos de pronóstico
-    if (forecastResult.forecast) {
+    if (Array.isArray(forecastResult.forecast)) {
       forecastResult.forecast.forEach(f => {
-        const existing = points.find(p => p.semana === f.semana);
+        if (!f || !f.semana) return;
+        const sem = String(f.semana);
+        const existing = points.find(p => p.semana === sem);
         if (existing) {
-          existing.prediccion = f.prediccion;
-          existing.lower_bound = f.lower_bound;
-          existing.upper_bound = f.upper_bound;
+          existing.prediccion = Number(f.prediccion) || 0;
+          existing.lower_bound = f.lower_bound != null ? Number(f.lower_bound) : null;
+          existing.upper_bound = f.upper_bound != null ? Number(f.upper_bound) : null;
         } else {
           points.push({
-            semana: f.semana,
+            semana: sem,
             semanaLabel: formatDate(f.semana),
             actual: null,
-            prediccion: f.prediccion,
-            lower_bound: f.lower_bound,
-            upper_bound: f.upper_bound
+            prediccion: Number(f.prediccion) || 0,
+            lower_bound: f.lower_bound != null ? Number(f.lower_bound) : null,
+            upper_bound: f.upper_bound != null ? Number(f.upper_bound) : null
           });
         }
       });
@@ -173,20 +199,36 @@ export default function Predictive() {
 
   // Cálculos de Demanda Acumulada para Escenarios Cyber Days
   const cyberScenarios = useMemo(() => {
-    if (!forecastResult || !forecastResult.sufficient_history || !forecastResult.forecast) return null;
-    
-    // Sumamos la demanda pronosticada para el horizonte seleccionado
-    const baseDemand = forecastResult.forecast.reduce((acc, f) => acc + Number(f.prediccion), 0);
-    
+    if (!forecastResult || !forecastResult.sufficient_history || !Array.isArray(forecastResult.forecast)) {
+      return null;
+    }
+    const baseDemand = forecastResult.forecast.reduce((acc, f) => acc + (Number(f?.prediccion) || 0), 0);
     return {
       base: Math.round(baseDemand),
-      moderate: Math.round(baseDemand * 1.20), // +20%
-      intensive: Math.round(baseDemand * 1.50)  // +50%
+      moderate: Math.round(baseDemand * 1.20),
+      intensive: Math.round(baseDemand * 1.50)
     };
   }, [forecastResult]);
 
   if (loading) {
-    return <div className="panel" style={{ padding: 40, textAlign: 'center' }}>Cargando evaluación predictiva y modelos en BigQuery...</div>;
+    return (
+      <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+        <RefreshCw className="spin" size={24} style={{ marginBottom: 12, color: '#38bdf8' }} />
+        <p style={{ margin: 0, color: '#94a3b8' }}>Cargando evaluación predictiva y modelos en BigQuery...</p>
+      </div>
+    );
+  }
+
+  if (pageError && !metrics.length) {
+    return (
+      <div className="panel error" style={{ padding: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#f87171' }}>
+          <AlertTriangle size={24} />
+          <h3 style={{ margin: 0 }}>Error al consultar evaluación predictiva</h3>
+        </div>
+        <p style={{ color: '#cbd5e1', marginTop: 8 }}>{pageError}</p>
+      </div>
+    );
   }
 
   return (
@@ -261,9 +303,10 @@ export default function Predictive() {
             <select
               value={selectedSource}
               onChange={e => {
-                setSelectedSource(e.target.value);
-                if (e.target.value === 'uci') setGranularityMode('country_product');
-                else if (e.target.value === 'thelook') setGranularityMode('thelook_store');
+                const src = e.target.value;
+                setSelectedSource(src);
+                if (src === 'uci') setGranularityMode('country_product');
+                else if (src === 'thelook') setGranularityMode('thelook_store');
                 else setGranularityMode('category');
               }}
               style={{ width: '100%', background: '#0f172a', border: '1px solid #475569', color: '#f8fafc', padding: '7px 10px', borderRadius: 6, fontSize: 12, outline: 'none' }}
@@ -380,13 +423,13 @@ export default function Predictive() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: 18 }}>
                 <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: 8, border: '1px solid #334155' }}>
                   <span style={{ fontSize: 11, color: '#94a3b8', display: 'block' }}>Modelo Seleccionado</span>
-                  <strong style={{ fontSize: 14, color: '#f8fafc' }}>{forecastResult.model_name.split('(')[0]}</strong>
+                  <strong style={{ fontSize: 14, color: '#f8fafc' }}>{String(forecastResult.model_name || 'Modelo').split('(')[0]}</strong>
                   <small style={{ color: '#64748b', display: 'block', fontSize: 10 }}>Por menor WAPE (Holdout)</small>
                 </div>
 
                 <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: 8, border: '1px solid #334155' }}>
                   <span style={{ fontSize: 11, color: '#94a3b8', display: 'block' }}>Demanda Promedio</span>
-                  <strong style={{ fontSize: 18, color: '#38bdf8' }}>{forecastResult.avg_demand} u/sem</strong>
+                  <strong style={{ fontSize: 18, color: '#38bdf8' }}>{formatNumber(forecastResult.avg_demand)} u/sem</strong>
                   <small style={{ color: '#64748b', display: 'block', fontSize: 10 }}>Histórica real</small>
                 </div>
 
@@ -396,22 +439,22 @@ export default function Predictive() {
                     fontSize: 16,
                     color: forecastResult.trend === 'CRECIENTE' ? '#4ade80' : forecastResult.trend === 'DECRECIENTE' ? '#f87171' : '#fbbf24'
                   }}>
-                    {forecastResult.trend}
+                    {forecastResult.trend || 'ESTABLE'}
                   </strong>
                   <small style={{ color: '#64748b', display: 'block', fontSize: 10 }}>Dirección de serie</small>
                 </div>
 
                 <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: 8, border: '1px solid #334155' }}>
                   <span style={{ fontSize: 11, color: '#94a3b8', display: 'block' }}>Incertidumbre (σ)</span>
-                  <strong style={{ fontSize: 18, color: '#fbbf24' }}>±{forecastResult.variability_std}</strong>
+                  <strong style={{ fontSize: 18, color: '#fbbf24' }}>±{formatNumber(forecastResult.variability_std)}</strong>
                   <small style={{ color: '#64748b', display: 'block', fontSize: 10 }}>Desviación estándar</small>
                 </div>
 
                 {forecastResult.metrics?.WAPE !== undefined && (
                   <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: 8, border: '1px solid #334155' }}>
                     <span style={{ fontSize: 11, color: '#94a3b8', display: 'block' }}>WAPE del Segmento</span>
-                    <strong style={{ fontSize: 18, color: '#34d399' }}>{forecastResult.metrics.WAPE}%</strong>
-                    <small style={{ color: '#64748b', display: 'block', fontSize: 10 }}>MAE: {forecastResult.metrics.MAE}</small>
+                    <strong style={{ fontSize: 18, color: '#34d399' }}>{formatNumber(forecastResult.metrics.WAPE)}%</strong>
+                    <small style={{ color: '#64748b', display: 'block', fontSize: 10 }}>MAE: {formatNumber(forecastResult.metrics.MAE)}</small>
                   </div>
                 )}
               </div>
@@ -450,12 +493,12 @@ export default function Predictive() {
 
                 <div style={{ marginTop: 10, fontSize: 11, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Info size={13} style={{ color: '#38bdf8' }} />
-                  <span>{forecastResult.note}</span>
+                  <span>{forecastResult.note || 'Pronóstico calculado mediante backtest dinámico con holdout temporal.'}</span>
                 </div>
               </div>
 
               {/* INTEGRACIÓN CON CYBER DAYS SIMULATOR */}
-              {(granularityMode === 'seller_product' || granularityMode === 'country_product') && (
+              {(granularityMode === 'seller_product' || granularityMode === 'country_product') && cyberScenarios && (
                 <div style={{ marginTop: 24, padding: 20, background: '#1e1b4b', border: '1px solid #4f46e5', borderRadius: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                     <Zap size={20} style={{ color: '#818cf8' }} />
@@ -469,17 +512,17 @@ export default function Predictive() {
                     <div style={{ background: '#312e81', padding: 16, borderRadius: 8, border: '1px solid #4338ca' }}>
                       <strong style={{ display: 'block', color: '#f8fafc', fontSize: 14 }}>Escenario Base</strong>
                       <span style={{ color: '#a5b4fc', fontSize: 12 }}>Demanda proyectada por el modelo</span>
-                      <h4 style={{ margin: '10px 0 0 0', color: '#818cf8', fontSize: 24 }}>{cyberScenarios?.base} u</h4>
+                      <h4 style={{ margin: '10px 0 0 0', color: '#818cf8', fontSize: 24 }}>{cyberScenarios.base} u</h4>
                     </div>
                     <div style={{ background: '#312e81', padding: 16, borderRadius: 8, border: '1px solid #4338ca' }}>
                       <strong style={{ display: 'block', color: '#f8fafc', fontSize: 14 }}>Moderado (+20%)</strong>
                       <span style={{ color: '#a5b4fc', fontSize: 12 }}>Incremento promocional típico</span>
-                      <h4 style={{ margin: '10px 0 0 0', color: '#fbbf24', fontSize: 24 }}>{cyberScenarios?.moderate} u</h4>
+                      <h4 style={{ margin: '10px 0 0 0', color: '#fbbf24', fontSize: 24 }}>{cyberScenarios.moderate} u</h4>
                     </div>
                     <div style={{ background: '#312e81', padding: 16, borderRadius: 8, border: '1px solid #4338ca' }}>
                       <strong style={{ display: 'block', color: '#f8fafc', fontSize: 14 }}>Intensivo (+50%)</strong>
                       <span style={{ color: '#a5b4fc', fontSize: 12 }}>Pico de tráfico Cyber Days</span>
-                      <h4 style={{ margin: '10px 0 0 0', color: '#f87171', fontSize: 24 }}>{cyberScenarios?.intensive} u</h4>
+                      <h4 style={{ margin: '10px 0 0 0', color: '#f87171', fontSize: 24 }}>{cyberScenarios.intensive} u</h4>
                     </div>
                   </div>
 
@@ -654,10 +697,10 @@ export default function Predictive() {
                     <td>{idx + 1}</td>
                     <td><strong>{ev.model}</strong></td>
                     <td style={{ fontWeight: idx === 0 ? 700 : 400, color: idx === 0 ? '#34d399' : 'inherit' }}>
-                      {ev.wape}%
+                      {formatNumber(ev.wape)}%
                     </td>
-                    <td>{ev.mae}</td>
-                    <td>{ev.rmse}</td>
+                    <td>{formatNumber(ev.mae)}</td>
+                    <td>{formatNumber(ev.rmse)}</td>
                     <td>
                       {idx === 0 ? (
                         <span style={{ fontSize: 10, background: '#10b981', color: '#064e3b', padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>SELECCIONADO AUTOMÁTICAMENTE</span>
@@ -674,5 +717,13 @@ export default function Predictive() {
       ) : null}
 
     </div>
+  );
+}
+
+export default function Predictive() {
+  return (
+    <ErrorBoundary fallbackTitle="Error al renderizar Predicción de Demanda">
+      <PredictiveContent />
+    </ErrorBoundary>
   );
 }

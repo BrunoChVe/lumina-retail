@@ -395,5 +395,17 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertEqual(data.get("country"), "United Kingdom")
         self.assertIn("forecast", data)
 
+    def test_predictive_forecast_models_evals_included(self):
+        """Verifica que el endpoint granular retorne models_evals para la tabla de comparación."""
+        res = self.client.get("/api/predictive/forecast?source=olist&seller_id=4a3ca9315b744ce9f8e9374361493884&product_id=99a4788cb24856965c36a24e339b6058")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("sufficient_history"))
+        self.assertIn("models_evals", data)
+        self.assertIsInstance(data["models_evals"], list)
+        if len(data["models_evals"]) > 0:
+            self.assertIn("model", data["models_evals"][0])
+            self.assertIn("wape", data["models_evals"][0])
+
 if __name__ == "__main__":
     unittest.main()

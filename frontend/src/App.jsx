@@ -1,6 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { RefreshCw } from 'lucide-react';
 import Sidebar from './components/Sidebar';
+import ErrorBoundary from './components/ErrorBoundary';
 import { api } from './services/api';
 import './index.css';
 
@@ -80,16 +81,18 @@ export default function App() {
             <button className="refresh" onClick={loadData} style={{ marginTop: 15 }}>Reintentar Conexión</button>
           </div>
         ) : (
-          <Suspense fallback={<div className="panel" style={{ margin: '0 40px' }}>Cargando módulo...</div>}>
-            {active === 'overview' && <Overview commercial={commercial} logistics={logistics} monthly={monthly}/>}
-            {active === 'store' && <StorePerf />}
-            {active === 'commercial' && <Commercial/>}
-            {active === 'logistics' && <Logistics/>}
-            {active === 'sources' && <Sources/>}
-            {active === 'inventory' && <Inventory/>}
-            {active === 'predictive' && <Predictive/>}
-            {active === 'simulation' && <SimulationCenter/>}
-          </Suspense>
+          <ErrorBoundary fallbackTitle="Error en el Módulo Seleccionado" onReset={() => setActive('overview')}>
+            <Suspense fallback={<div className="panel" style={{ margin: '0 40px' }}>Cargando módulo...</div>}>
+              {active === 'overview' && <Overview commercial={commercial} logistics={logistics} monthly={monthly}/>}
+              {active === 'store' && <StorePerf />}
+              {active === 'commercial' && <Commercial/>}
+              {active === 'logistics' && <Logistics/>}
+              {active === 'sources' && <Sources/>}
+              {active === 'inventory' && <Inventory/>}
+              {active === 'predictive' && <Predictive/>}
+              {active === 'simulation' && <SimulationCenter/>}
+            </Suspense>
+          </ErrorBoundary>
         )}
 
         <footer>LUMINA RETAIL · INTELLIGENCE & OPERATIONS PLATFORM · 2026</footer>
