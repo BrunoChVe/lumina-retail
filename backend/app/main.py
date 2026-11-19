@@ -297,7 +297,6 @@ def inventory_current():
                 ELSE 'NORMAL'
             END AS estado_stock
         FROM `{PROJECT_ID}.{STREAMING_DATASET}.stock_actual_vw`
-        WHERE (region IS NULL OR region != 'CYBER_TEST')
         ORDER BY stock_registrado ASC, product_id, region
     """)
 

@@ -19,6 +19,7 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [showCyber, setShowCyber] = useState(false);
 
   const loadInventory = useCallback(async () => {
     setError('');
@@ -45,14 +46,17 @@ export default function Inventory() {
     return () => clearInterval(interval);
   }, [loadInventory]);
 
-  const critical = current.filter(x => Number(x.stock_registrado) < 10).length;
-  const low = current.filter(x =>
+  const filteredCurrent = showCyber ? current : current.filter(x => x.region !== 'CYBER_TEST');
+  const filteredRisks = showCyber ? risks : risks.filter(x => x.region !== 'CYBER_TEST');
+
+  const critical = filteredCurrent.filter(x => Number(x.stock_registrado) < 10).length;
+  const low = filteredCurrent.filter(x =>
     Number(x.stock_registrado) >= 10 &&
     Number(x.stock_registrado) <= 20
   ).length;
-  const normal = current.filter(x => Number(x.stock_registrado) > 20).length;
-  const stale = current.filter(x => x.estado_frescura !== 'ACTUALIZADO').length;
-  const topRisks = [...risks]
+  const normal = filteredCurrent.filter(x => Number(x.stock_registrado) > 20).length;
+  const stale = filteredCurrent.filter(x => x.estado_frescura !== 'ACTUALIZADO').length;
+  const topRisks = [...filteredRisks]
     .sort((a, b) => Number(b.porcentaje_alertas) - Number(a.porcentaje_alertas))
     .slice(0, 5);
 
@@ -79,9 +83,15 @@ export default function Inventory() {
             Stock registrado, frescura de telemetría y riesgo histórico por región.
           </p>
         </div>
-        <button className="refresh" onClick={loadInventory}>
-          <RefreshCw size={15}/> Actualizar
-        </button>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', background: showCyber ? '#1e1b4b' : '#1e293b', padding: '6px 12px', borderRadius: '6px', border: `1px solid ${showCyber ? '#6366f1' : '#334155'}`, color: showCyber ? '#818cf8' : '#cbd5e1' }}>
+            <input type="checkbox" checked={showCyber} onChange={e => setShowCyber(e.target.checked)} style={{ margin: 0 }} />
+            Simulación Cyber Days
+          </label>
+          <button className="refresh" onClick={loadInventory}>
+            <RefreshCw size={15}/> Actualizar
+          </button>
+        </div>
       </section>
 
       {error && <div className="panel error">{error}. Mostrando último resultado disponible.</div>}
@@ -92,7 +102,7 @@ export default function Inventory() {
           <div>
             <strong>Atención: telemetría desactualizada</strong>
             <p>
-              {stale} de {current.length} registros superan el umbral de frescura
+              {stale} de {filteredCurrent.length} registros superan el umbral de frescura
               de cinco minutos. Los valores mostrados corresponden al último
               stock registrado y no necesariamente al stock disponible actual.
             </p>
@@ -104,7 +114,7 @@ export default function Inventory() {
         <div className="panel inventory-kpi">
           <div className="inventory-kpi-icon"><Package size={20}/></div>
           <span>Productos / regiones</span>
-          <strong>{current.length}</strong>
+          <strong>{filteredCurrent.length}</strong>
           <small>Registros de stock actual</small>
         </div>
 
@@ -152,9 +162,9 @@ export default function Inventory() {
               </tr>
             </thead>
             <tbody>
-              {current.map((item, index) => (
-                <tr key={`${item.product_id}-${item.region}-${index}`}>
-                  <td><strong>{item.product_id}</strong></td>
+              {filteredCurrent.map((item, index) => (
+                <tr key={`${item.product_id}-${item.region}-${index}`} style={{ background: item.region === 'CYBER_TEST' ? '#1e1b4b' : 'transparent' }}>
+                  <td><strong>{item.product_id}</strong> {item.region === 'CYBER_TEST' && <span style={{ fontSize: '10px', background: '#4338ca', color: 'white', padding: '2px 6px', borderRadius: '4px', marginLeft: '6px' }}>SINTÉTICO</span>}</td>
                   <td>{item.region}</td>
                   <td><strong>{item.stock_registrado}</strong></td>
                   <td>
@@ -172,7 +182,7 @@ export default function Inventory() {
                   <td>{formatDate(item.fecha_ultimo_evento)}</td>
                 </tr>
               ))}
-              {current.length === 0 && (
+              {filteredCurrent.length === 0 && (
                 <tr><td colSpan="6">No hay registros de inventario.</td></tr>
               )}
             </tbody>
@@ -204,8 +214,8 @@ export default function Inventory() {
               </tr>
             </thead>
             <tbody>
-              {risks.map((item, index) => (
-                <tr key={`${item.product_id}-${item.region}-${index}`}>
+              {filteredRisks.map((item, index) => (
+                <tr key={`${item.product_id}-${item.region}-${index}`} style={{ background: item.region === 'CYBER_TEST' ? '#1e1b4b' : 'transparent' }}>
                   <td><strong>{item.product_id}</strong></td>
                   <td>{item.region}</td>
                   <td>{item.total_eventos}</td>
@@ -219,7 +229,7 @@ export default function Inventory() {
                   <td>{Number(item.porcentaje_alertas).toFixed(2)}%</td>
                 </tr>
               ))}
-              {risks.length === 0 && (
+              {filteredRisks.length === 0 && (
                 <tr><td colSpan="7">No hay registros históricos de riesgo.</td></tr>
               )}
             </tbody>

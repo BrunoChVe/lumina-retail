@@ -16,18 +16,18 @@ WITH eventos_filtrados AS (
     region,
     stock,
     SAFE_CAST(event_timestamp AS TIMESTAMP) AS event_timestamp,
-    SAFE_CAST(processed_at AS TIMESTAMP) AS fecha_procesamiento,
+    SAFE_CAST(ingested_at AS TIMESTAMP) AS fecha_procesamiento,
     ROW_NUMBER() OVER (
       PARTITION BY product_id, region
       ORDER BY
         SAFE_CAST(event_timestamp AS TIMESTAMP) DESC,
-        SAFE_CAST(processed_at AS TIMESTAMP) DESC
+        SAFE_CAST(ingested_at AS TIMESTAMP) DESC
     ) AS rn
   FROM `lumina-retail-001.lumina_streaming.telemetria_consolidada`
   -- FILTRO DEFENSIVO APLICADO ANTES DE LA VENTANA ANALÍTICA:
   -- Evita que eventos sintéticos usurpen rn = 1 y preserva nulos legítimos
-  WHERE (region IS NULL OR region != 'CYBER_TEST')
-    AND (event_type IS NULL OR event_type != 'SYNTHETIC_CYBERDAY_STRESS')
+  -- WHERE (region IS NULL OR region != 'CYBER_TEST')
+    -- AND (event_type IS NULL OR event_type != 'SYNTHETIC_CYBERDAY_STRESS')
 )
 SELECT
   product_id,
@@ -65,8 +65,8 @@ FROM
   `lumina-retail-001.lumina_streaming.telemetria_consolidada`
 -- FILTRO DEFENSIVO APLICADO ANTES DE LA AGREGACIÓN:
 -- Evita que eventos de prueba inflen total_eventos o distorsionen alertas_criticas
-WHERE (region IS NULL OR region != 'CYBER_TEST')
-  AND (event_type IS NULL OR event_type != 'SYNTHETIC_CYBERDAY_STRESS')
+-- WHERE (region IS NULL OR region != 'CYBER_TEST')
+  -- AND (event_type IS NULL OR event_type != 'SYNTHETIC_CYBERDAY_STRESS')
 GROUP BY
   product_id,
   region;
