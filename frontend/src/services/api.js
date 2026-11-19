@@ -1,13 +1,12 @@
-const API = import.meta.env.VITE_API_URL || '';
+const API_URL = '';
 
-async function get(endpoint) {
-  const response = await fetch(`${API}${endpoint}`);
-
-  if (!response.ok) {
-    throw new Error(`Error API ${response.status}: ${endpoint}`);
+async function get(path) {
+  const res = await fetch(`${API_URL}${path}`);
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Error HTTP: ${res.status}`);
   }
-
-  return response.json();
+  return res.json();
 }
 
 export const api = {
@@ -21,5 +20,6 @@ export const api = {
   inventoryCurrent: () => get('/api/inventory/current'),
   inventoryRisks: () => get('/api/inventory/risks'),
   predictiveMetrics: () => get('/api/predictive/metrics'),
-  predictivePredictions: () => get('/api/predictive/predictions')
+  predictivePredictions: () => get('/api/predictive/predictions'),
+  storePerformance: () => get('/api/store/performance')
 };

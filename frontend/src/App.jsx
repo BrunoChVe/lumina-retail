@@ -10,14 +10,16 @@ const Logistics = lazy(() => import('./pages/Logistics'));
 const Sources = lazy(() => import('./pages/Sources'));
 const Inventory = lazy(() => import('./pages/Inventory'));
 const Predictive = lazy(() => import('./pages/Predictive'));
+const StorePerf = lazy(() => import('./pages/StorePerf'));
 
 const titles = {
-  overview: 'Resumen ejecutivo',
-  commercial: 'Análisis comercial',
-  logistics: 'Análisis logístico',
-  sources: 'Fuentes de datos',
-  inventory: 'Control de inventario',
-  predictive: 'Predicción de demanda'
+  overview: 'Resumen Ejecutivo',
+  store: 'Store Performance',
+  commercial: 'Análisis Comercial',
+  logistics: 'Análisis Logístico',
+  sources: 'System Health & Data Sources',
+  inventory: 'Control de Inventario',
+  predictive: 'Predicción de Demanda'
 };
 
 export default function App() {
@@ -57,7 +59,7 @@ export default function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <span className="eyebrow">LUMINA RETAIL / ANALYTICS</span>
+            <span className="eyebrow">LUMINA RETAIL / OPERATIONS PLATFORM</span>
             <h1>{titles[active]}</h1>
           </div>
           {active !== 'inventory' && (
@@ -68,28 +70,26 @@ export default function App() {
         </header>
 
         {loading ? (
-          <div className="panel">Consultando BigQuery...</div>
+          <div className="panel" style={{ margin: '0 40px' }}>Consultando Data Warehouse...</div>
         ) : error ? (
-          <div className="panel error">
-            <h3>Error de conexión</h3>
+          <div className="panel error" style={{ margin: '0 40px', background: '#ef444420', border: '1px solid #ef444440' }}>
+            <h3 style={{ color: '#f87171' }}>Excepción en Orquestador WAP</h3>
             <p>{error}</p>
-            <button onClick={loadData}>Reintentar</button>
+            <button className="refresh" onClick={loadData} style={{ marginTop: 15 }}>Reintentar Conexión</button>
           </div>
         ) : (
-          <Suspense fallback={<div className="panel">Cargando módulo...</div>}>
-            {active === 'overview' && (
-              <Overview commercial={commercial}
-                logistics={logistics} monthly={monthly}/>
-            )}
+          <Suspense fallback={<div className="panel" style={{ margin: '0 40px' }}>Cargando módulo...</div>}>
+            {active === 'overview' && <Overview commercial={commercial} logistics={logistics} monthly={monthly}/>}
+            {active === 'store' && <StorePerf />}
             {active === 'commercial' && <Commercial/>}
             {active === 'logistics' && <Logistics/>}
             {active === 'sources' && <Sources/>}
             {active === 'inventory' && <Inventory/>}
-{active === 'predictive' && <Predictive/>}
+            {active === 'predictive' && <Predictive/>}
           </Suspense>
         )}
 
-        <footer>LUMINA RETAIL · DATA INTELLIGENCE PLATFORM · 2026</footer>
+        <footer>LUMINA RETAIL · INTELLIGENCE & OPERATIONS PLATFORM · 2026</footer>
       </main>
     </div>
   );

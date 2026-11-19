@@ -1,35 +1,37 @@
 import {
-  LayoutDashboard, ShoppingCart, Truck, Database, Activity, Package, BrainCircuit
+  LayoutDashboard, ShoppingCart, Truck, Database, Activity, Package, BrainCircuit, Store
 } from 'lucide-react';
 
 const items = [
-  { id: 'overview', label: 'Resumen ejecutivo', icon: LayoutDashboard },
-  { id: 'commercial', label: 'Comercial', icon: ShoppingCart },
+  { id: 'overview', label: 'Resumen Ejecutivo', icon: LayoutDashboard },
+  { id: 'store', label: 'Store Performance', icon: Store },
+  { id: 'commercial', label: 'Análisis Comercial', icon: ShoppingCart },
   { id: 'logistics', label: 'Logística', icon: Truck },
-  { id: 'sources', label: 'Fuentes de datos', icon: Database },
-  { id: 'inventory', label: 'Inventario', icon: Package },
-  { id: 'predictive', label: 'Predicción de demanda', icon: BrainCircuit }
+  { id: 'inventory', label: 'Control de Inventario', icon: Package },
+  { id: 'predictive', label: 'Predicción de Demanda', icon: BrainCircuit },
+  { id: 'sources', label: 'System Health', icon: Database }
 ];
 
 export default function Sidebar({ active, onNavigate }) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-icon"><Activity /></div>
+        <div className="brand-icon"><Activity size={24} /></div>
         <div>
           <strong>LUMINA</strong>
-          <span>RETAIL INTELLIGENCE</span>
+          <span>RETAIL PLATFORM</span>
         </div>
       </div>
 
-      <div className="nav-label">PLATAFORMA</div>
+      <div className="nav-label">MÓDULOS DE NEGOCIO</div>
 
       {items.map(item => {
         const Icon = item.icon;
+        const isActive = active === item.id ? 'active' : '';
         return (
           <button
             key={item.id}
-            className={`nav-item ${active === item.id ? 'active' : ''}`}
+            className={"nav-item " + isActive}
             onClick={() => onNavigate(item.id)}
           >
             <Icon size={18} />
@@ -39,21 +41,22 @@ export default function Sidebar({ active, onNavigate }) {
       })}
 
       <div className="sidebar-bottom">
-        <div className="connection"><span style={{ background: '#10b981' }} /> BigQuery conectado</div>
-        <small style={{ display: 'block', color: '#91a2bf', fontSize: '11px', marginTop: '2px' }}>lumina-retail-001</small>
+        <div className="connection"><span style={{ background: '#10b981' }} /> BigQuery Conectado</div>
+        <small style={{ display: 'block', color: '#64748b', fontSize: '11px', marginTop: '2px' }}>lumina-retail-001</small>
         <div style={{
           marginTop: '10px',
           padding: '6px 8px',
-          background: '#1d2b45',
+          background: '#0b1120',
           borderRadius: '6px',
+          border: '1px solid #1e293b',
           fontSize: '10px',
           color: '#38bdf8',
           display: 'flex',
           alignItems: 'center',
           gap: '6px'
         }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8' }} />
-          <span>WAP Gold v1.0 · 4/4 Dominios</span>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 4px #38bdf8' }} />
+          <span>WAP Gold v1.0 · 4/4 Activos</span>
         </div>
       </div>
     </aside>

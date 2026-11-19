@@ -140,7 +140,7 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertEqual(len(data), 26)
 
     def test_predictive_metrics_unaffected(self):
-        """Valida las 3 métricas de evaluación del modelo XGBoost en Gold WAP."""
+        """Valida las 3 métricas de evaluación del modelo LightGBM en Gold WAP."""
         res = self.client.get("/api/predictive/metrics")
         self.assertEqual(res.status_code, 200)
         data = res.json()
@@ -154,7 +154,7 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertGreater(metrics["RMSE"], 0)
         self.assertGreater(metrics["WAPE"], 0)
         for row in data:
-            self.assertEqual(row["model_name"], "XGBoost")
+            self.assertEqual(row["model_name"], "LightGBM")
             self.assertEqual(row["n_test_rows"], 888)
 
     def test_predictive_predictions_unaffected(self):
