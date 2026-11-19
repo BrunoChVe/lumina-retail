@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ShoppingCart, Truck, Database, Activity, Package, BrainCircuit, Store
+  LayoutDashboard, ShoppingCart, Truck, Database, Activity, Package, BrainCircuit, Store, Zap
 } from 'lucide-react';
 
 const items = [
@@ -9,6 +9,7 @@ const items = [
   { id: 'logistics', label: 'Logística', icon: Truck },
   { id: 'inventory', label: 'Control de Inventario', icon: Package },
   { id: 'predictive', label: 'Predicción de Demanda', icon: BrainCircuit },
+  { id: 'simulation', label: 'Centro de Simulación', icon: Zap },
   { id: 'sources', label: 'System Health', icon: Database }
 ];
 

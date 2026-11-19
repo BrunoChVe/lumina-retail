@@ -11,6 +11,7 @@ const Sources = lazy(() => import('./pages/Sources'));
 const Inventory = lazy(() => import('./pages/Inventory'));
 const Predictive = lazy(() => import('./pages/Predictive'));
 const StorePerf = lazy(() => import('./pages/StorePerf'));
+const SimulationCenter = lazy(() => import('./pages/SimulationCenter'));
 
 const titles = {
   overview: 'Resumen Ejecutivo',
@@ -19,7 +20,8 @@ const titles = {
   logistics: 'Análisis Logístico',
   sources: 'System Health & Data Sources',
   inventory: 'Control de Inventario',
-  predictive: 'Predicción de Demanda'
+  predictive: 'Predicción de Demanda',
+  simulation: 'Centro de Simulación Cyber Days'
 };
 
 export default function App() {
@@ -86,6 +88,7 @@ export default function App() {
             {active === 'sources' && <Sources/>}
             {active === 'inventory' && <Inventory/>}
             {active === 'predictive' && <Predictive/>}
+            {active === 'simulation' && <SimulationCenter/>}
           </Suspense>
         )}
 

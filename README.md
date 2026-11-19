@@ -247,6 +247,7 @@ gcloud run services update-traffic lumina-retail --to-latest --region us-central
 |---|---|
 | [`docs/INFORME_CIERRE_Y_EVIDENCIAS.md`](docs/INFORME_CIERRE_Y_EVIDENCIAS.md) | Informe formal de auditoría de solo lectura, evidencias de comandos, costos de infraestructura y diagnóstico de tests. |
 | [`docs/INFORME_PRUEBA_CARGA_CYBER_DAYS.md`](docs/INFORME_PRUEBA_CARGA_CYBER_DAYS.md) | Memoria técnica reproducible de la simulación Cyber Days (795 eventos), balance de masa, métricas y guía de demostración. |
+| [`docs/CENTRO_SIMULACION_CYBER_DAYS.md`](docs/CENTRO_SIMULACION_CYBER_DAYS.md) | Arquitectura y guía de uso del Centro de Simulación automatizado de Cyber Days (Modo Económico vs. Streaming Real). |
 | [`docs/GRANULARIDAD_PREDICTIVA_Y_FILTROS.md`](docs/GRANULARIDAD_PREDICTIVA_Y_FILTROS.md) | Auditoría de granularidad dimensional por fuente, pronósticos por tienda/vendedor/producto y criterio de suficiencia de historial. |
 | [`docs/INVENTARIO_ANALITICO_UCI.md`](docs/INVENTARIO_ANALITICO_UCI.md) | Modelo y endpoints del inventario analítico y demanda histórica para la fuente UCI Online Retail. |
 | [`docs/ARQUITECTURA_PEDIDOS_CYBER_DAYS.md`](docs/ARQUITECTURA_PEDIDOS_CYBER_DAYS.md) | Arquitectura implementada para streaming y propuesta de diseño para el ciclo de pedidos transaccional. |

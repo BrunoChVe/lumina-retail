@@ -9,6 +9,19 @@ async function get(path) {
   return res.json();
 }
 
+async function post(path, data = {}) {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Error HTTP: ${res.status}`);
+  }
+  return res.json();
+}
+
 export const api = {
   health: () => get('/api/health'),
   commercial: () => get('/api/commercial/summary'),
@@ -74,5 +87,18 @@ export const api = {
   storePerformance: () => get('/api/store/performance'),
   countries: () => get('/api/commercial/countries'),
   customersSummary: () => get('/api/commercial/customers_summary'),
-  cancellations: () => get('/api/commercial/cancellations')
+  cancellations: () => get('/api/commercial/cancellations'),
+  // Centro de Simulación Cyber Days y Ciclo de Pedidos
+  simulationModalities: () => get('/api/simulation/modalities'),
+  simulationInfrastructureStatus: () => get('/api/simulation/infrastructure_status'),
+  simulationValidateConfig: (config) => post('/api/simulation/validate_config', config),
+  simulationRun: (config) => post('/api/simulation/run', config),
+  simulationStatus: (runId) => get(`/api/simulation/status/${runId}`),
+  simulationEvents: (runId, limit = 100, eventType = '') => {
+    const params = new URLSearchParams({ limit });
+    if (eventType && eventType !== 'ALL') params.append('event_type', eventType);
+    return get(`/api/simulation/events/${runId}?${params.toString()}`);
+  },
+  simulationHistory: () => get('/api/simulation/history'),
+  simulationCancel: (runId) => post(`/api/simulation/cancel/${runId}`)
 };

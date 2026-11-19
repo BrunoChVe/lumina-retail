@@ -934,6 +934,92 @@ def commercial_cancellations():
         ORDER BY source_system
     """, domain_check="commercial")
 
+
+# ==============================================================================
+# CENTRO DE SIMULACIÓN CYBER DAYS Y CICLO DE PEDIDOS
+# ==============================================================================
+
+try:
+    from app.simulation_engine import (
+        get_available_modalities,
+        get_infrastructure_status,
+        validate_simulation_config,
+        create_simulation_run,
+        get_run_status,
+        get_run_events,
+        get_runs_history,
+        cancel_simulation_run
+    )
+except ImportError:
+    from backend.app.simulation_engine import (
+        get_available_modalities,
+        get_infrastructure_status,
+        validate_simulation_config,
+        create_simulation_run,
+        get_run_status,
+        get_run_events,
+        get_runs_history,
+        cancel_simulation_run
+    )
+
+
+@app.get("/api/simulation/modalities")
+def simulation_modalities():
+    """Retorna las modalidades disponibles (Económica serverless vs Streaming real)."""
+    return get_available_modalities()
+
+
+@app.get("/api/simulation/infrastructure_status")
+def simulation_infrastructure_status():
+    """Consulta el estado de cómputo de la infraestructura de streaming en GCP."""
+    return get_infrastructure_status()
+
+
+@app.post("/api/simulation/validate_config")
+def simulation_validate_config(config: Dict[str, Any]):
+    """Valida los parámetros de configuración y límites seguros de la prueba."""
+    return validate_simulation_config(config)
+
+
+@app.post("/api/simulation/run")
+def simulation_run(config: Dict[str, Any]):
+    """Inicia una simulación de Cyber Days / Ciclo de pedidos con control de concurrencia."""
+    result = create_simulation_run(config)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail="; ".join(result.get("errors", ["Error al iniciar simulación"])))
+    return result
+
+
+@app.get("/api/simulation/status/{run_id}")
+def simulation_status(run_id: str):
+    """Consulta el estado y progreso en tiempo real de una ejecución."""
+    st = get_run_status(run_id)
+    if not st:
+        raise HTTPException(status_code=404, detail=f"Simulación '{run_id}' no encontrada.")
+    return st
+
+
+@app.get("/api/simulation/events/{run_id}")
+def simulation_events(run_id: str, limit: int = 100, event_type: Optional[str] = None):
+    """Consulta el log cronológico de eventos emitidos en la simulación."""
+    safe_limit = min(max(limit, 1), 500)
+    return get_run_events(run_id, limit=safe_limit, event_type=event_type)
+
+
+@app.get("/api/simulation/history")
+def simulation_history():
+    """Retorna el historial de ejecuciones (incluyendo la histórica real validada)."""
+    return get_runs_history()
+
+
+@app.post("/api/simulation/cancel/{run_id}")
+def simulation_cancel(run_id: str):
+    """Cancela de forma segura una simulación activa."""
+    result = cancel_simulation_run(run_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
 # Frontend React compilado con Vite (Docker: /app/frontend/dist; Local: ../frontend/dist)
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 if not FRONTEND_DIST.exists():
