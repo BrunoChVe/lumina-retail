@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   RefreshCw, Package, AlertTriangle, Clock, Activity, Target,
-  TrendingUp, Globe, BarChart3, Search, Filter, Layers, DollarSign
+  TrendingUp, Globe, BarChart3, Search, Filter, Layers, DollarSign,
+  Store, RotateCcw, CheckCircle2, Info
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -31,10 +32,21 @@ const formatCompact = (val) =>
   new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(Number(val || 0));
 
 export default function Inventory() {
+  // Metadatos para selectores dependientes
+  const [metadata, setMetadata] = useState(null);
+
+  // Filtros Globales Combinables
+  const [sourceFilter, setSourceFilter] = useState('ALL'); // 'ALL', 'operational', 'uci'
+  const [selectedRegion, setSelectedRegion] = useState('ALL');
+  const [selectedProduct, setSelectedProduct] = useState('ALL');
+  const [selectedCountry, setSelectedCountry] = useState('ALL');
+  const [selectedStockCode, setSelectedStockCode] = useState('ALL');
+  const [selectedAbc, setSelectedAbc] = useState('ALL');
+  const [showCyber, setShowCyber] = useState(false);
+
   // Estado Inventario Operativo (Streaming)
   const [current, setCurrent] = useState([]);
   const [risks, setRisks] = useState([]);
-  const [showCyber, setShowCyber] = useState(false);
 
   // Estado Inventario Analítico UCI
   const [uciSummary, setUciSummary] = useState(null);
@@ -47,27 +59,53 @@ export default function Inventory() {
   const [error, setError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
 
-  // Filtros interactivos para UCI
-  const [monthlyMetric, setMonthlyMetric] = useState('all'); // 'all', 'sold', 'returned', 'net'
+  // Filtros internos UCI
+  const [monthlyMetric, setMonthlyMetric] = useState('all');
   const [searchCatalog, setSearchCatalog] = useState('');
-  const [abcFilter, setAbcFilter] = useState('ALL');
 
-  const loadAllData = useCallback(async () => {
+  // Cargar metadatos de filtros una sola vez o cuando cambia showCyber
+  useEffect(() => {
+    api.inventoryMetadata(showCyber)
+      .then(meta => setMetadata(meta))
+      .catch(() => {});
+  }, [showCyber]);
+
+  // Función de carga reactiva con filtros aplicados
+  const loadData = useCallback(async () => {
     setError('');
     try {
-      const [stockData, riskData, summaryData, moData, catData, ctryData] = await Promise.all([
-        api.inventoryCurrent(showCyber),
-        api.inventoryRisks(showCyber),
-        api.inventoryUciSummary().catch(() => []),
-        api.inventoryUciMonthly().catch(() => []),
-        api.inventoryUciCatalog(100).catch(() => []),
-        api.inventoryUciCountry().catch(() => [])
-      ]);
+      const promises = [];
+
+      // Cargar inventario operativo si la fuente es ALL u operational
+      if (sourceFilter === 'ALL' || sourceFilter === 'operational') {
+        promises.push(api.inventoryCurrent(showCyber, selectedRegion, selectedProduct));
+        promises.push(api.inventoryRisks(showCyber, selectedRegion, selectedProduct));
+      } else {
+        promises.push(Promise.resolve([]));
+        promises.push(Promise.resolve([]));
+      }
+
+      // Cargar inventario analítico UCI si la fuente es ALL o uci
+      if (sourceFilter === 'ALL' || sourceFilter === 'uci') {
+        promises.push(api.inventoryUciSummary(selectedCountry, selectedStockCode, selectedAbc).catch(() => []));
+        promises.push(api.inventoryUciMonthly(selectedCountry, selectedStockCode).catch(() => []));
+        promises.push(api.inventoryUciCatalog(100, selectedStockCode, selectedAbc, selectedCountry).catch(() => []));
+        promises.push(api.inventoryUciCountry(selectedCountry, selectedStockCode).catch(() => []));
+      } else {
+        promises.push(Promise.resolve([]));
+        promises.push(Promise.resolve([]));
+        promises.push(Promise.resolve([]));
+        promises.push(Promise.resolve([]));
+      }
+
+      const [stockData, riskData, summaryData, moData, catData, ctryData] = await Promise.all(promises);
 
       setCurrent(stockData || []);
       setRisks(riskData || []);
       if (summaryData && summaryData.length > 0) {
         setUciSummary(summaryData[0]);
+      } else {
+        setUciSummary(null);
       }
       setUciMonthly(moData || []);
       setUciCatalog(catData || []);
@@ -78,13 +116,42 @@ export default function Inventory() {
     } finally {
       setLoading(false);
     }
-  }, [showCyber]);
+  }, [showCyber, sourceFilter, selectedRegion, selectedProduct, selectedCountry, selectedStockCode, selectedAbc]);
 
   useEffect(() => {
-    loadAllData();
-    const interval = setInterval(loadAllData, 30000);
+    loadData();
+    const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
-  }, [loadAllData]);
+  }, [loadData]);
+
+  // Resetear filtros
+  const handleResetFilters = () => {
+    setSourceFilter('ALL');
+    setSelectedRegion('ALL');
+    setSelectedProduct('ALL');
+    setSelectedCountry('ALL');
+    setSelectedStockCode('ALL');
+    setSelectedAbc('ALL');
+    setSearchCatalog('');
+  };
+
+  // Productos disponibles dependientes de la región seleccionada
+  const availableOperationalProducts = useMemo(() => {
+    if (!metadata || !metadata.operational_region_product_map) {
+      return metadata?.operational_products || [];
+    }
+    if (selectedRegion === 'ALL') {
+      return metadata.operational_products || [];
+    }
+    return metadata.operational_region_product_map[selectedRegion] || [];
+  }, [metadata, selectedRegion]);
+
+  // Si cambia la región y el producto actual no está disponible, resetearlo a ALL
+  useEffect(() => {
+    if (selectedProduct !== 'ALL' && !availableOperationalProducts.includes(selectedProduct)) {
+      setSelectedProduct('ALL');
+    }
+  }, [selectedRegion, availableOperationalProducts, selectedProduct]);
 
   // Métricas derivadas inventario operativo
   const filteredCurrent = current;
@@ -146,35 +213,37 @@ export default function Inventory() {
     return [...uciCountry].slice(0, 10);
   }, [uciCountry]);
 
-  // Filtrado de la tabla de catálogo analítico
+  // Filtrado interno de la tabla de catálogo analítico
   const filteredCatalog = useMemo(() => {
     return uciCatalog.filter(item => {
       const matchSearch =
         searchCatalog === '' ||
         (item.stock_code && item.stock_code.toLowerCase().includes(searchCatalog.toLowerCase())) ||
         (item.description && item.description.toLowerCase().includes(searchCatalog.toLowerCase()));
-      const matchAbc = abcFilter === 'ALL' || item.abc_class === abcFilter;
-      return matchSearch && matchAbc;
+      return matchSearch;
     });
-  }, [uciCatalog, searchCatalog, abcFilter]);
+  }, [uciCatalog, searchCatalog]);
 
-  if (loading && current.length === 0) {
-    return <div className="panel" style={{ padding: 40, textAlign: 'center' }}>Consultando inventario en BigQuery y telemetría de streaming...</div>;
+  if (loading && current.length === 0 && !uciSummary) {
+    return (
+      <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+        <RefreshCw className="spin" size={24} style={{ marginBottom: 12, color: '#38bdf8' }} />
+        <div>Cargando inventarios operativos y analíticos multisource...</div>
+      </div>
+    );
   }
 
   return (
     <div className="page-stack inventory-page">
-      {/* ========================================================================= */}
-      {/* SECCIÓN 1: INVENTARIO OPERATIVO EN TIEMPO REAL (STREAMING KAFKA / SPARK)  */}
-      {/* ========================================================================= */}
+      {/* ENCABEZADO DE MÓDULO */}
       <section className="inventory-heading">
         <div>
-          <h2>Control de Inventario Operativo</h2>
+          <h2>Control de Inventario y Demanda Multisource</h2>
           <p className="muted">
-            Telemetría de stock en tiempo real (Spark Streaming), niveles de existencias y riesgo por región (Olist / RetailSmart).
+            Monitoreo en tiempo real de telemetría de almacén (Olist / RetailSmart) y análisis de demanda histórica (UCI Online Retail).
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <label style={{
             display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer',
             background: showCyber ? '#1e1b4b' : '#1e293b', padding: '6px 12px', borderRadius: '6px',
@@ -183,420 +252,588 @@ export default function Inventory() {
             <input type="checkbox" checked={showCyber} onChange={e => setShowCyber(e.target.checked)} style={{ margin: 0 }} />
             Simulación Cyber Days
           </label>
-          <button className="refresh" onClick={loadAllData}>
+          <button className="refresh" onClick={loadData}>
             <RefreshCw size={15} /> Actualizar
           </button>
         </div>
       </section>
 
+      {/* ========================================================================= */}
+      {/* BARRA DE FILTROS COMBINABLES Y DEPENDIENTES                               */}
+      {/* ========================================================================= */}
+      <section className="panel" style={{ background: '#0f172a', border: '1px solid #334155', padding: '16px 20px', borderRadius: '10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Filter size={16} style={{ color: '#38bdf8' }} />
+            <strong style={{ fontSize: 14, color: '#f8fafc' }}>Filtros de Segmentación y Granularidad</strong>
+            <span style={{ fontSize: 11, background: '#1e293b', color: '#94a3b8', padding: '2px 8px', borderRadius: 4 }}>
+              Filtros Reactivos Dependientes
+            </span>
+          </div>
+          <button
+            onClick={handleResetFilters}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, background: '#1e293b', border: '1px solid #475569',
+              color: '#cbd5e1', fontSize: 12, padding: '5px 12px', borderRadius: 6, cursor: 'pointer'
+            }}
+          >
+            <RotateCcw size={13} /> Restablecer Filtros
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px' }}>
+          {/* 1. Filtro Fuente de Datos */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 4, fontWeight: 600 }}>
+              FUENTE DE DATOS
+            </label>
+            <select
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', color: '#f8fafc', padding: '7px 10px', borderRadius: 6, fontSize: 12, outline: 'none' }}
+            >
+              <option value="ALL">Todas las Fuentes</option>
+              <option value="operational">Olist / RetailSmart (Operativo)</option>
+              <option value="uci">UCI Online Retail (Analítico UK)</option>
+            </select>
+          </div>
+
+          {/* 2. Filtro Tienda / Región (Operativo) */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 4, fontWeight: 600 }}>
+              TIENDA / REGIÓN (OPERATIVO)
+            </label>
+            <select
+              value={selectedRegion}
+              onChange={e => setSelectedRegion(e.target.value)}
+              disabled={sourceFilter === 'uci'}
+              style={{
+                width: '100%', background: sourceFilter === 'uci' ? '#1e293b66' : '#1e293b',
+                border: '1px solid #334155', color: sourceFilter === 'uci' ? '#64748b' : '#f8fafc',
+                padding: '7px 10px', borderRadius: 6, fontSize: 12, outline: 'none'
+              }}
+            >
+              <option value="ALL">Todas las Regiones / Tiendas</option>
+              {metadata?.operational_regions?.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 3. Filtro Producto (Operativo) - Dependiente */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 4, fontWeight: 600 }}>
+              PRODUCTO (OPERATIVO)
+            </label>
+            <select
+              value={selectedProduct}
+              onChange={e => setSelectedProduct(e.target.value)}
+              disabled={sourceFilter === 'uci'}
+              style={{
+                width: '100%', background: sourceFilter === 'uci' ? '#1e293b66' : '#1e293b',
+                border: '1px solid #334155', color: sourceFilter === 'uci' ? '#64748b' : '#f8fafc',
+                padding: '7px 10px', borderRadius: 6, fontSize: 12, outline: 'none'
+              }}
+            >
+              <option value="ALL">Todos los Productos</option>
+              {availableOperationalProducts.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 4. Filtro País / Mercado (UCI) */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 4, fontWeight: 600 }}>
+              PAÍS / MERCADO (UCI)
+            </label>
+            <select
+              value={selectedCountry}
+              onChange={e => setSelectedCountry(e.target.value)}
+              disabled={sourceFilter === 'operational'}
+              style={{
+                width: '100%', background: sourceFilter === 'operational' ? '#1e293b66' : '#1e293b',
+                border: '1px solid #334155', color: sourceFilter === 'operational' ? '#64748b' : '#f8fafc',
+                padding: '7px 10px', borderRadius: 6, fontSize: 12, outline: 'none'
+              }}
+            >
+              <option value="ALL">Todos los Países (38)</option>
+              {metadata?.uci_countries?.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 5. Filtro Clase ABC (UCI) */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 4, fontWeight: 600 }}>
+              CLASE ABC (UCI)
+            </label>
+            <select
+              value={selectedAbc}
+              onChange={e => setSelectedAbc(e.target.value)}
+              disabled={sourceFilter === 'operational'}
+              style={{
+                width: '100%', background: sourceFilter === 'operational' ? '#1e293b66' : '#1e293b',
+                border: '1px solid #334155', color: sourceFilter === 'operational' ? '#64748b' : '#f8fafc',
+                padding: '7px 10px', borderRadius: 6, fontSize: 12, outline: 'none'
+              }}
+            >
+              <option value="ALL">Todas las Clases</option>
+              <option value="A">Clase A (Top 70% Ventas)</option>
+              <option value="B">Clase B (20% Ventas)</option>
+              <option value="C">Clase C (10% Ventas)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Leyenda metodológica de granularidad */}
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e293b', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#94a3b8' }}>
+          <Info size={13} style={{ color: '#38bdf8' }} />
+          <span>
+            <strong>Reglas de Granularidad:</strong> En Olist/Streaming se segmenta por Región operativa y SKU de telemetría.
+            En UCI Online Retail no existen tiendas físicas; la segmentación geográfica opera exclusivamente a nivel de País/Mercado.
+          </span>
+        </div>
+      </section>
+
       {error && <div className="panel error">{error}. Mostrando último resultado disponible.</div>}
 
-      {stale > 0 && (
-        <div className="inventory-warning">
-          <AlertTriangle size={20} />
-          <div>
-            <strong>Atención: telemetría desactualizada</strong>
-            <p>
-              {stale} de {filteredCurrent.length} registros superan el umbral de frescura
-              de cinco minutos. Los valores mostrados corresponden al último
-              stock registrado y no necesariamente al stock disponible actual.
-            </p>
+      {/* ========================================================================= */}
+      {/* SECCIÓN 1: INVENTARIO OPERATIVO EN TIEMPO REAL (STREAMING KAFKA / SPARK)  */}
+      {/* ========================================================================= */}
+      {(sourceFilter === 'ALL' || sourceFilter === 'operational') && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ background: '#10b981', color: '#064e3b', fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+              FUENTE: OLIST / RETAILSMART (STREAMING OPERATIVO)
+            </span>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>
+              Filtro activo: {selectedRegion !== 'ALL' ? `Región: ${selectedRegion}` : 'Todas las regiones'}
+              {selectedProduct !== 'ALL' ? ` | Producto: ${selectedProduct}` : ''}
+            </span>
+          </div>
+
+          {stale > 0 && (
+            <div className="inventory-warning">
+              <AlertTriangle size={20} />
+              <div>
+                <strong>Atención: telemetría desactualizada</strong>
+                <p>
+                  {stale} de {filteredCurrent.length} registros superan el umbral de frescura de 5 minutos.
+                  Los valores corresponden al último evento capturado.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Tarjetas KPI Inventario Operativo */}
+          <section className="kpi-grid inventory-kpis">
+            <div className="panel kpi">
+              <div className="kpi-icon"><Package size={20} /></div>
+              <span>Productos / Regiones</span>
+              <strong>{filteredCurrent.length}</strong>
+              <small>Filas coincidentes</small>
+            </div>
+
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#7f1d1d', color: '#f87171' }}><AlertTriangle size={20} /></div>
+              <span>Stock Crítico</span>
+              <strong style={{ color: '#f87171' }}>{critical}</strong>
+              <small>Menos de 10 unidades</small>
+            </div>
+
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#78350f', color: '#fbbf24' }}><Activity size={20} /></div>
+              <span>Stock Bajo</span>
+              <strong style={{ color: '#fbbf24' }}>{low}</strong>
+              <small>Entre 10 y 20 unidades</small>
+            </div>
+
+            <div className="panel kpi">
+              <div className="kpi-icon"><Clock size={20} /></div>
+              <span>Sin Frescura Vigente</span>
+              <strong>{stale}</strong>
+              <small>Desactualizados (&gt;5m)</small>
+            </div>
+          </section>
+
+          {/* Tabla Stock Actual */}
+          <section className="panel">
+            <div className="inventory-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div>
+                <h3>Stock actual por región y producto</h3>
+                <p className="muted">Último valor registrado vía telemetría en streaming según filtros seleccionados.</p>
+              </div>
+              <span className="inventory-count" style={{ fontSize: 13, color: '#94a3b8' }}>{normal} en nivel normal</span>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Región</th>
+                    <th>Stock Registrado</th>
+                    <th>Estado de Stock</th>
+                    <th>Frescura</th>
+                    <th>Último Evento</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCurrent.map((item, index) => (
+                    <tr key={`${item.product_id}-${item.region}-${index}`} style={{ background: item.region === 'CYBER_TEST' ? '#1e1b4b' : 'transparent' }}>
+                      <td>
+                        <strong>{item.product_id}</strong>
+                        {item.region === 'CYBER_TEST' && (
+                          <span style={{ fontSize: '10px', background: '#4338ca', color: 'white', padding: '2px 6px', borderRadius: '4px', marginLeft: '6px' }}>
+                            SINTÉTICO
+                          </span>
+                        )}
+                      </td>
+                      <td>{item.region}</td>
+                      <td><strong>{item.stock_registrado}</strong></td>
+                      <td>
+                        <span className={`inventory-badge ${item.estado_stock?.toLowerCase()}`}>
+                          {item.estado_stock}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`inventory-badge ${item.estado_frescura === 'ACTUALIZADO' ? 'fresh' : 'stale'}`}>
+                          {freshnessLabel(item.estado_frescura)}
+                        </span>
+                      </td>
+                      <td>{formatDate(item.fecha_ultimo_evento)}</td>
+                    </tr>
+                  ))}
+                  {filteredCurrent.length === 0 && (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: 24, color: '#94a3b8' }}>
+                        No hay registros de inventario operativo que coincidan con los filtros seleccionados.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Riesgos Históricos */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginTop: '10px' }}>
+            <section className="panel">
+              <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+                <div>
+                  <h3>Riesgo histórico de inventario</h3>
+                  <p className="muted">Frecuencia de eventos críticos y stock mínimo registrado.</p>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th>Región</th>
+                      <th>Stock mín.</th>
+                      <th>Alertas</th>
+                      <th>% Alertas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRisks.slice(0, 7).map((item, index) => (
+                      <tr key={`${item.product_id}-${item.region}-${index}`} style={{ background: item.region === 'CYBER_TEST' ? '#1e1b4b' : 'transparent' }}>
+                        <td><strong>{item.product_id}</strong></td>
+                        <td>{item.region}</td>
+                        <td>{item.stock_minimo}</td>
+                        <td><span className="inventory-risk-number" style={{ color: '#f87171' }}>{item.alertas_criticas}</span></td>
+                        <td>{Number(item.porcentaje_alertas).toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                    {filteredRisks.length === 0 && (
+                      <tr><td colSpan="5" style={{ textAlign: 'center', padding: 16, color: '#94a3b8' }}>Sin registros de riesgo para este filtro.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+                <div>
+                  <h3>Top focos de riesgo histórico</h3>
+                  <p className="muted">Combinaciones producto-región con mayor tasa histórica de alertas críticas.</p>
+                </div>
+              </div>
+              <div className="inventory-risk-ranking" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {topRisks.map((item, index) => (
+                  <div className="inventory-risk-row" key={`${item.product_id}-${item.region}`} style={{ background: '#0f172a', padding: '10px 14px', borderRadius: 8 }}>
+                    <div className="inventory-risk-label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <strong style={{ fontSize: 13 }}>{index + 1}. {item.product_id} · {item.region}</strong>
+                      <span style={{ color: '#f87171', fontWeight: 600 }}>{Number(item.porcentaje_alertas).toFixed(1)}%</span>
+                    </div>
+                    <div className="inventory-risk-track" style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                      <div
+                        className="inventory-risk-fill"
+                        style={{ width: `${Math.min(Number(item.porcentaje_alertas), 100)}%`, height: '100%', background: '#ef4444' }}
+                      />
+                    </div>
+                    <small style={{ color: '#94a3b8', marginTop: 4, display: 'block', fontSize: 11 }}>
+                      {item.alertas_criticas} eventos críticos de {item.total_eventos} observaciones
+                    </small>
+                  </div>
+                ))}
+                {topRisks.length === 0 && (
+                  <div style={{ color: '#94a3b8', textAlign: 'center', padding: 20 }}>No hay focos de riesgo bajo el filtro actual.</div>
+                )}
+              </div>
+            </section>
           </div>
         </div>
       )}
 
-      {/* Tarjetas KPI Inventario Operativo */}
-      <section className="kpi-grid inventory-kpis">
-        <div className="panel kpi">
-          <div className="kpi-icon"><Package size={20} /></div>
-          <span>Productos / regiones</span>
-          <strong>{filteredCurrent.length}</strong>
-          <small>Registros de stock actual</small>
-        </div>
-
-        <div className="panel kpi">
-          <div className="kpi-icon" style={{ background: '#7f1d1d', color: '#f87171' }}><AlertTriangle size={20} /></div>
-          <span>Stock crítico</span>
-          <strong style={{ color: '#f87171' }}>{critical}</strong>
-          <small>Menos de 10 unidades</small>
-        </div>
-
-        <div className="panel kpi">
-          <div className="kpi-icon" style={{ background: '#78350f', color: '#fbbf24' }}><Activity size={20} /></div>
-          <span>Stock bajo</span>
-          <strong style={{ color: '#fbbf24' }}>{low}</strong>
-          <small>Entre 10 y 20 unidades</small>
-        </div>
-
-        <div className="panel kpi">
-          <div className="kpi-icon"><Clock size={20} /></div>
-          <span>Datos no actualizados</span>
-          <strong>{stale}</strong>
-          <small>Registros sin frescura vigente</small>
-        </div>
-      </section>
-
-      {/* Tabla Stock Actual */}
-      <section className="panel">
-        <div className="inventory-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div>
-            <h3>Stock actual por región</h3>
-            <p className="muted">Último valor registrado por producto y región vía telemetría en streaming.</p>
-          </div>
-          <span className="inventory-count" style={{ fontSize: 13, color: '#94a3b8' }}>{normal} en nivel normal</span>
-        </div>
-
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Producto</th>
-                <th>Región</th>
-                <th>Stock</th>
-                <th>Estado de stock</th>
-                <th>Frescura</th>
-                <th>Último evento</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCurrent.map((item, index) => (
-                <tr key={`${item.product_id}-${item.region}-${index}`} style={{ background: item.region === 'CYBER_TEST' ? '#1e1b4b' : 'transparent' }}>
-                  <td>
-                    <strong>{item.product_id}</strong>
-                    {item.region === 'CYBER_TEST' && (
-                      <span style={{ fontSize: '10px', background: '#4338ca', color: 'white', padding: '2px 6px', borderRadius: '4px', marginLeft: '6px' }}>
-                        SINTÉTICO
-                      </span>
-                    )}
-                  </td>
-                  <td>{item.region}</td>
-                  <td><strong>{item.stock_registrado}</strong></td>
-                  <td>
-                    <span className={`inventory-badge ${item.estado_stock?.toLowerCase()}`}>
-                      {item.estado_stock}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`inventory-badge ${item.estado_frescura === 'ACTUALIZADO' ? 'fresh' : 'stale'}`}>
-                      {freshnessLabel(item.estado_frescura)}
-                    </span>
-                  </td>
-                  <td>{formatDate(item.fecha_ultimo_evento)}</td>
-                </tr>
-              ))}
-              {filteredCurrent.length === 0 && (
-                <tr><td colSpan="6" style={{ textAlign: 'center', padding: 20 }}>No hay registros de inventario operativo.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* Riesgos Históricos */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginTop: '10px' }}>
-        <section className="panel">
-          <div className="inventory-section-title" style={{ marginBottom: 16 }}>
-            <div>
-              <h3>Riesgo histórico de inventario</h3>
-              <p className="muted">Frecuencia de eventos críticos y stock mínimo registrado.</p>
-            </div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Región</th>
-                  <th>Stock mín.</th>
-                  <th>Alertas</th>
-                  <th>% Alertas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRisks.slice(0, 7).map((item, index) => (
-                  <tr key={`${item.product_id}-${item.region}-${index}`} style={{ background: item.region === 'CYBER_TEST' ? '#1e1b4b' : 'transparent' }}>
-                    <td><strong>{item.product_id}</strong></td>
-                    <td>{item.region}</td>
-                    <td>{item.stock_minimo}</td>
-                    <td><span className="inventory-risk-number" style={{ color: '#f87171' }}>{item.alertas_criticas}</span></td>
-                    <td>{Number(item.porcentaje_alertas).toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="inventory-section-title" style={{ marginBottom: 16 }}>
-            <div>
-              <h3>Top 5 focos de riesgo histórico</h3>
-              <p className="muted">Combinaciones producto-región con mayor tasa histórica de alertas críticas.</p>
-            </div>
-          </div>
-          <div className="inventory-risk-ranking" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {topRisks.map((item, index) => (
-              <div className="inventory-risk-row" key={`${item.product_id}-${item.region}`} style={{ background: '#0f172a', padding: '10px 14px', borderRadius: 8 }}>
-                <div className="inventory-risk-label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <strong style={{ fontSize: 13 }}>{index + 1}. {item.product_id} · {item.region}</strong>
-                  <span style={{ color: '#f87171', fontWeight: 600 }}>{Number(item.porcentaje_alertas).toFixed(1)}%</span>
-                </div>
-                <div className="inventory-risk-track" style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
-                  <div
-                    className="inventory-risk-fill"
-                    style={{ width: `${Math.min(Number(item.porcentaje_alertas), 100)}%`, height: '100%', background: '#ef4444' }}
-                  />
-                </div>
-                <small style={{ color: '#94a3b8', marginTop: 4, display: 'block', fontSize: 11 }}>
-                  {item.alertas_criticas} eventos críticos de {item.total_eventos} observaciones
-                </small>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
       {/* ========================================================================= */}
       {/* SECCIÓN 2: ANÁLISIS DE INVENTARIO Y DEMANDA HISTÓRICA — UCI ONLINE RETAIL  */}
       {/* ========================================================================= */}
-      <div style={{ marginTop: 48, borderTop: '2px solid #334155', paddingTop: 32 }}>
-        <section className="inventory-heading">
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-              <span style={{ background: '#0284c7', color: 'white', fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
-                FUENTE: UCI ONLINE RETAIL (UK / EUROPA)
-              </span>
-              <span style={{ color: '#94a3b8', fontSize: 12 }}>Periodo: Dic 2010 – Dic 2011 (53 semanas)</span>
-            </div>
-            <h2 style={{ fontSize: 22, color: '#38bdf8' }}>ANÁLISIS DE INVENTARIO Y DEMANDA HISTÓRICA — UCI ONLINE RETAIL</h2>
-            <p className="muted" style={{ maxWidth: 900 }}>
-              UCI Online Retail proporciona registros históricos de transacciones. Los indicadores de este apartado representan
-              <strong> actividad comercial y demanda histórica, no existencias físicas disponibles</strong> ni stock en almacén.
-            </p>
-          </div>
-        </section>
-
-        {/* A. Indicadores Principales (KPI Cards) */}
-        <section className="kpi-grid" style={{ marginTop: 20 }}>
-          <div className="panel kpi">
-            <div className="kpi-icon" style={{ background: '#0369a1', color: '#e0f2fe' }}><Package size={20} /></div>
-            <span>Total de Productos</span>
-            <strong>{uciSummary ? Number(uciSummary.total_products).toLocaleString('en-US') : '3,941'}</strong>
-            <small>SKUs con actividad histórica</small>
-          </div>
-
-          <div className="panel kpi">
-            <div className="kpi-icon" style={{ background: '#047857', color: '#d1fae5' }}><TrendingUp size={20} /></div>
-            <span>Unidades Comercializadas</span>
-            <strong>{uciSummary ? formatCompact(uciSummary.total_units_sold) : '5.66M'}</strong>
-            <small>{uciSummary ? Number(uciSummary.total_units_sold).toLocaleString('en-US') : '5,660,981'} unidades brutas</small>
-          </div>
-
-          <div className="panel kpi">
-            <div className="kpi-icon" style={{ background: '#991b1b', color: '#fee2e2' }}><AlertTriangle size={20} /></div>
-            <span>Unidades Devueltas</span>
-            <strong style={{ color: '#f87171' }}>{uciSummary ? formatCompact(uciSummary.total_units_returned) : '458K'}</strong>
-            <small>{uciSummary ? Number(uciSummary.total_units_returned).toLocaleString('en-US') : '458,319'} unidades negativas</small>
-          </div>
-
-          <div className="panel kpi">
-            <div className="kpi-icon" style={{ background: '#6b21a8', color: '#f3e8ff' }}><DollarSign size={20} /></div>
-            <span>Ingresos Históricos (GBP)</span>
-            <strong style={{ color: '#c084fc' }}>{uciSummary ? currencyGBP(uciSummary.total_revenue_gbp) : '£10,666,685'}</strong>
-            <small>Moneda original: GBP</small>
-          </div>
-
-          <div className="panel kpi">
-            <div className="kpi-icon" style={{ background: '#1e3a8a', color: '#dbeafe' }}><Globe size={20} /></div>
-            <span>Países Comerciales</span>
-            <strong>{uciSummary ? uciSummary.total_countries : '38'}</strong>
-            <small>Mercados internacionales</small>
-          </div>
-
-          <div className="panel kpi">
-            <div className="kpi-icon" style={{ background: '#374151', color: '#f3f4f6' }}><Clock size={20} /></div>
-            <span>Periodo Histórico</span>
-            <strong style={{ fontSize: 15 }}>13 Meses</strong>
-            <small>Dic 2010 a Dic 2011</small>
-          </div>
-        </section>
-
-        {/* B. Gráfico 1 — Evolución Mensual de Demanda */}
-        <section className="panel" style={{ marginTop: 24 }}>
-          <div className="inventory-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+      {(sourceFilter === 'ALL' || sourceFilter === 'uci') && (
+        <div style={{ marginTop: 48, borderTop: '2px solid #334155', paddingTop: 32 }}>
+          <section className="inventory-heading">
             <div>
-              <h3>Evolución Mensual de Demanda — UCI Online Retail</h3>
-              <p className="muted">Comportamiento mensual de unidades vendidas brutas, devoluciones registradas y demanda neta.</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                <span style={{ background: '#0284c7', color: 'white', fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+                  FUENTE: UCI ONLINE RETAIL (UK / EUROPA)
+                </span>
+                <span style={{ color: '#94a3b8', fontSize: 12 }}>
+                  Filtro activo: {selectedCountry !== 'ALL' ? `País: ${selectedCountry}` : 'Todos los países'}
+                  {selectedAbc !== 'ALL' ? ` | Clase ABC: ${selectedAbc}` : ''}
+                </span>
+              </div>
+              <h2 style={{ fontSize: 22, color: '#38bdf8' }}>ANÁLISIS DE INVENTARIO Y DEMANDA HISTÓRICA — UCI ONLINE RETAIL</h2>
+              <p className="muted" style={{ maxWidth: 900 }}>
+                UCI Online Retail proporciona registros históricos de transacciones. Los indicadores de este apartado representan
+                <strong> actividad comercial y demanda histórica, no existencias físicas disponibles</strong> ni stock en almacén.
+              </p>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {[
-                { id: 'all', label: 'Todas las series' },
-                { id: 'sold', label: 'Unidades vendidas' },
-                { id: 'returned', label: 'Devoluciones' },
-                { id: 'net', label: 'Demanda neta' }
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setMonthlyMetric(tab.id)}
-                  style={{
-                    background: monthlyMetric === tab.id ? '#0284c7' : '#1e293b',
-                    color: monthlyMetric === tab.id ? 'white' : '#94a3b8',
-                    border: '1px solid #334155',
-                    borderRadius: 6,
-                    padding: '6px 12px',
-                    fontSize: 12,
-                    cursor: 'pointer'
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
+          </section>
+
+          {/* A. Indicadores Principales (KPI Cards) */}
+          <section className="kpi-grid" style={{ marginTop: 20 }}>
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#0369a1', color: '#e0f2fe' }}><Package size={20} /></div>
+              <span>Total de Productos</span>
+              <strong>{uciSummary ? Number(uciSummary.total_products).toLocaleString('en-US') : '0'}</strong>
+              <small>SKUs con actividad histórica</small>
             </div>
-          </div>
 
-          <div className="chart-box" style={{ height: 320 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={uciMonthly} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis
-                  dataKey="sales_month"
-                  stroke="#94a3b8"
-                  fontSize={11}
-                  tickFormatter={val => {
-                    if (!val) return '';
-                    const d = new Date(val);
-                    return isNaN(d) ? String(val) : d.toLocaleDateString('es-PE', { month: 'short', year: '2-digit' });
-                  }}
-                />
-                <YAxis stroke="#94a3b8" fontSize={11} tickFormatter={formatCompact} />
-                <Tooltip
-                  contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
-                  labelFormatter={val => new Date(val).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })}
-                  formatter={(val, name) => [Number(val).toLocaleString('en-US'), name]}
-                />
-                <Legend wrapperStyle={{ paddingTop: 10 }} />
-                {(monthlyMetric === 'all' || monthlyMetric === 'sold') && (
-                  <Bar dataKey="total_units_sold" name="Unidades Comercializadas" fill="#38bdf8" radius={[4, 4, 0, 0]} />
-                )}
-                {(monthlyMetric === 'all' || monthlyMetric === 'returned') && (
-                  <Bar dataKey="total_units_returned" name="Unidades Devueltas" fill="#f87171" radius={[4, 4, 0, 0]} />
-                )}
-                {(monthlyMetric === 'all' || monthlyMetric === 'net') && (
-                  <Bar dataKey="total_units_net" name="Unidades Netas" fill="#10b981" radius={[4, 4, 0, 0]} />
-                )}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#047857', color: '#d1fae5' }}><TrendingUp size={20} /></div>
+              <span>Unidades Comercializadas</span>
+              <strong>{uciSummary ? formatCompact(uciSummary.total_units_sold) : '0'}</strong>
+              <small>{uciSummary ? Number(uciSummary.total_units_sold).toLocaleString('en-US') : '0'} unidades brutas</small>
+            </div>
 
-        {/* Fila con Gráfico 2 (Top Productos) y Gráfico 3 (Clasificación ABC) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', marginTop: '20px' }}>
-          {/* C. Gráfico 2 — Productos con Mayor Demanda */}
-          <section className="panel">
-            <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#991b1b', color: '#fee2e2' }}><AlertTriangle size={20} /></div>
+              <span>Unidades Devueltas</span>
+              <strong style={{ color: '#f87171' }}>{uciSummary ? formatCompact(uciSummary.total_units_returned) : '0'}</strong>
+              <small>{uciSummary ? Number(uciSummary.total_units_returned).toLocaleString('en-US') : '0'} unidades negativas</small>
+            </div>
+
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#6b21a8', color: '#f3e8ff' }}><DollarSign size={20} /></div>
+              <span>Ingresos Históricos (GBP)</span>
+              <strong style={{ color: '#c084fc' }}>{uciSummary ? currencyGBP(uciSummary.total_revenue_gbp) : '£0'}</strong>
+              <small>Moneda original: GBP</small>
+            </div>
+
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#1e3a8a', color: '#dbeafe' }}><Globe size={20} /></div>
+              <span>Países Comerciales</span>
+              <strong>{uciSummary ? uciSummary.total_countries : '0'}</strong>
+              <small>Mercados internacionales</small>
+            </div>
+
+            <div className="panel kpi">
+              <div className="kpi-icon" style={{ background: '#374151', color: '#f3f4f6' }}><Clock size={20} /></div>
+              <span>Periodo Histórico</span>
+              <strong style={{ fontSize: 14 }}>13 Meses</strong>
+              <small>Dic 2010 a Dic 2011</small>
+            </div>
+          </section>
+
+          {/* B. Gráfico 1 — Evolución Mensual de Demanda */}
+          <section className="panel" style={{ marginTop: 24 }}>
+            <div className="inventory-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
               <div>
-                <h3>Top 10 Productos con Mayor Demanda</h3>
-                <p className="muted">Ranking de SKUs por volumen total de unidades comercializadas en UCI.</p>
+                <h3>Evolución Mensual de Demanda — UCI Online Retail</h3>
+                <p className="muted">Comportamiento mensual de unidades vendidas brutas, devoluciones registradas y demanda neta.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[
+                  { id: 'all', label: 'Todas las series' },
+                  { id: 'sold', label: 'Unidades vendidas' },
+                  { id: 'returned', label: 'Devoluciones' },
+                  { id: 'net', label: 'Demanda neta' }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setMonthlyMetric(tab.id)}
+                    style={{
+                      background: monthlyMetric === tab.id ? '#0284c7' : '#1e293b',
+                      color: monthlyMetric === tab.id ? 'white' : '#94a3b8',
+                      border: '1px solid #334155',
+                      borderRadius: 6,
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
             </div>
+
             <div className="chart-box" style={{ height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topDemandProducts} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
-                  <XAxis type="number" stroke="#94a3b8" fontSize={11} tickFormatter={formatCompact} />
-                  <YAxis type="category" dataKey="shortDesc" stroke="#94a3b8" width={150} fontSize={11} />
+                <BarChart data={uciMonthly} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis
+                    dataKey="sales_month"
+                    stroke="#94a3b8"
+                    fontSize={11}
+                    tickFormatter={val => {
+                      if (!val) return '';
+                      const d = new Date(val);
+                      return isNaN(d) ? String(val) : d.toLocaleDateString('es-PE', { month: 'short', year: '2-digit' });
+                    }}
+                  />
+                  <YAxis stroke="#94a3b8" fontSize={11} tickFormatter={formatCompact} />
+                  <Tooltip
+                    contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
+                    labelFormatter={val => new Date(val).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })}
+                    formatter={(val, name) => [Number(val).toLocaleString('en-US'), name]}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: 10 }} />
+                  {(monthlyMetric === 'all' || monthlyMetric === 'sold') && (
+                    <Bar dataKey="total_units_sold" name="Unidades Comercializadas" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                  )}
+                  {(monthlyMetric === 'all' || monthlyMetric === 'returned') && (
+                    <Bar dataKey="total_units_returned" name="Unidades Devueltas" fill="#f87171" radius={[4, 4, 0, 0]} />
+                  )}
+                  {(monthlyMetric === 'all' || monthlyMetric === 'net') && (
+                    <Bar dataKey="total_units_net" name="Unidades Netas" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  )}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+
+          {/* Fila con Gráfico 2 (Top Productos) y Gráfico 3 (Clasificación ABC) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', marginTop: '20px' }}>
+            {/* C. Gráfico 2 — Productos con Mayor Demanda */}
+            <section className="panel">
+              <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+                <div>
+                  <h3>Top 10 Productos con Mayor Demanda</h3>
+                  <p className="muted">Ranking de SKUs por volumen total de unidades comercializadas en UCI.</p>
+                </div>
+              </div>
+              <div className="chart-box" style={{ height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topDemandProducts} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
+                    <XAxis type="number" stroke="#94a3b8" fontSize={11} tickFormatter={formatCompact} />
+                    <YAxis type="category" dataKey="shortDesc" stroke="#94a3b8" width={150} fontSize={11} />
+                    <Tooltip
+                      contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
+                      formatter={(val, name, item) => [
+                        `${Number(val).toLocaleString('en-US')} unidades (${currencyGBP(item.payload.gross_revenue_gbp)})`,
+                        `SKU: ${item.payload.stock_code}`
+                      ]}
+                    />
+                    <Bar dataKey="units_sold" name="Unidades Vendidas" fill="#818cf8" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </section>
+
+            {/* D. Gráfico 3 — Clasificación ABC */}
+            <section className="panel">
+              <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+                <div>
+                  <h3>Distribución de Catálogo por Clasificación ABC</h3>
+                  <p className="muted">Estratificación de SKUs según contribución acumulada a los ingresos históricos (GBP).</p>
+                </div>
+              </div>
+              <div className="chart-box" style={{ height: 210 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={abcChartData} margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
+                    <YAxis stroke="#94a3b8" fontSize={11} />
+                    <Tooltip
+                      contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
+                      formatter={(val, name, item) => [`${val} SKUs (${item.payload.pct}%)`, item.payload.revenuePct]}
+                    />
+                    <Bar dataKey="skus" name="Cantidad de SKUs" radius={[4, 4, 0, 0]}>
+                      {abcChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 12 }}>
+                <div style={{ background: '#064e3b', padding: '10px 12px', borderRadius: 6 }}>
+                  <strong style={{ color: '#34d399', fontSize: 13, display: 'block' }}>Clase A ({uciSummary?.count_a || 524} SKUs)</strong>
+                  <span style={{ fontSize: 11, color: '#a7f3d0' }}>70% de ventas acumuladas</span>
+                </div>
+                <div style={{ background: '#78350f', padding: '10px 12px', borderRadius: 6 }}>
+                  <strong style={{ color: '#fbbf24', fontSize: 13, display: 'block' }}>Clase B ({uciSummary?.count_b || 789} SKUs)</strong>
+                  <span style={{ fontSize: 11, color: '#fde68a' }}>20% de ventas acumuladas</span>
+                </div>
+                <div style={{ background: '#1e293b', padding: '10px 12px', borderRadius: 6 }}>
+                  <strong style={{ color: '#cbd5e1', fontSize: 13, display: 'block' }}>Clase C ({uciSummary?.count_c || 2628} SKUs)</strong>
+                  <span style={{ fontSize: 11, color: '#94a3b8' }}>10% de ventas acumuladas</span>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          {/* E. Gráfico 4 — Demanda por País */}
+          <section className="panel" style={{ marginTop: 20 }}>
+            <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+              <div>
+                <h3>Demanda y Volumen Comercializado por País (Top 10 Mercados)</h3>
+                <p className="muted">Distribución de unidades comercializadas e ingresos generados por mercado geográfico.</p>
+              </div>
+            </div>
+            <div className="chart-box" style={{ height: 280 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={topCountriesData} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="country" stroke="#94a3b8" fontSize={11} interval={0} angle={-25} textAnchor="end" height={60} />
+                  <YAxis stroke="#94a3b8" fontSize={11} tickFormatter={formatCompact} />
                   <Tooltip
                     contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
                     formatter={(val, name, item) => [
-                      `${Number(val).toLocaleString('en-US')} unidades (${currencyGBP(item.payload.gross_revenue_gbp)})`,
-                      `SKU: ${item.payload.stock_code}`
+                      `${Number(val).toLocaleString('en-US')} unidades (${currencyGBP(item.payload.total_revenue)})`,
+                      item.payload.country
                     ]}
                   />
-                  <Bar dataKey="units_sold" name="Unidades Vendidas" fill="#818cf8" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="total_units_sold" name="Unidades Comercializadas" fill="#0284c7" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </section>
 
-          {/* D. Gráfico 3 — Clasificación ABC */}
-          <section className="panel">
-            <div className="inventory-section-title" style={{ marginBottom: 16 }}>
+          {/* F. Tabla de Catálogo Analítico con Buscador */}
+          <section className="panel" style={{ marginTop: 20 }}>
+            <div className="inventory-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
               <div>
-                <h3>Distribución de Catálogo por Clasificación ABC</h3>
-                <p className="muted">Estratificación de SKUs según contribución acumulada a los ingresos históricos (GBP).</p>
+                <h3>Catálogo Analítico de Productos UCI</h3>
+                <p className="muted">Catálogo detallado con unidades comercializadas, devoluciones, rotación y clasificación ABC.</p>
               </div>
-            </div>
-            <div className="chart-box" style={{ height: 210 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={abcChartData} margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
-                  <YAxis stroke="#94a3b8" fontSize={11} />
-                  <Tooltip
-                    contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
-                    formatter={(val, name, item) => [`${val} SKUs (${item.payload.pct}%)`, item.payload.revenuePct]}
-                  />
-                  <Bar dataKey="skus" name="Cantidad de SKUs" radius={[4, 4, 0, 0]}>
-                    {abcChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 12 }}>
-              <div style={{ background: '#064e3b', padding: '10px 12px', borderRadius: 6 }}>
-                <strong style={{ color: '#34d399', fontSize: 13, display: 'block' }}>Clase A (524 SKUs)</strong>
-                <span style={{ fontSize: 11, color: '#a7f3d0' }}>70% de ventas acumuladas (13.3% del catálogo)</span>
-              </div>
-              <div style={{ background: '#78350f', padding: '10px 12px', borderRadius: 6 }}>
-                <strong style={{ color: '#fbbf24', fontSize: 13, display: 'block' }}>Clase B (789 SKUs)</strong>
-                <span style={{ fontSize: 11, color: '#fde68a' }}>20% de ventas acumuladas (20.0% del catálogo)</span>
-              </div>
-              <div style={{ background: '#1e293b', padding: '10px 12px', borderRadius: 6 }}>
-                <strong style={{ color: '#cbd5e1', fontSize: 13, display: 'block' }}>Clase C (2,628 SKUs)</strong>
-                <span style={{ fontSize: 11, color: '#94a3b8' }}>10% de ventas acumuladas (66.7% del catálogo)</span>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        {/* E. Gráfico 4 — Demanda por País */}
-        <section className="panel" style={{ marginTop: 20 }}>
-          <div className="inventory-section-title" style={{ marginBottom: 16 }}>
-            <div>
-              <h3>Demanda y Volumen Comercializado por País (Top 10 Mercados)</h3>
-              <p className="muted">Distribución de unidades comercializadas e ingresos generados por mercado geográfico.</p>
-            </div>
-          </div>
-          <div className="chart-box" style={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topCountriesData} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="country" stroke="#94a3b8" fontSize={11} interval={0} angle={-25} textAnchor="end" height={60} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickFormatter={formatCompact} />
-                <Tooltip
-                  contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
-                  formatter={(val, name, item) => [
-                    `${Number(val).toLocaleString('en-US')} unidades (${currencyGBP(item.payload.total_revenue)})`,
-                    item.payload.country
-                  ]}
-                />
-                <Bar dataKey="total_units_sold" name="Unidades Comercializadas" fill="#0284c7" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-
-        {/* F. Tabla de Catálogo Analítico con Filtros */}
-        <section className="panel" style={{ marginTop: 20 }}>
-          <div className="inventory-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
-            <div>
-              <h3>Catálogo Analítico de Productos UCI</h3>
-              <p className="muted">Catálogo detallado con unidades comercializadas, devoluciones, rotación y clasificación ABC.</p>
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0f172a', padding: '6px 12px', borderRadius: 6, border: '1px solid #334155' }}>
                 <Search size={14} style={{ color: '#94a3b8' }} />
                 <input
@@ -604,78 +841,64 @@ export default function Inventory() {
                   placeholder="Buscar por código o descripción..."
                   value={searchCatalog}
                   onChange={e => setSearchCatalog(e.target.value)}
-                  style={{ background: 'transparent', border: 'none', color: '#f8fafc', fontSize: 12, outline: 'none', width: 200 }}
+                  style={{ background: 'transparent', border: 'none', color: '#f8fafc', fontSize: 12, outline: 'none', width: 220 }}
                 />
               </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Filter size={14} style={{ color: '#94a3b8' }} />
-                <select
-                  value={abcFilter}
-                  onChange={e => setAbcFilter(e.target.value)}
-                  style={{ background: '#0f172a', border: '1px solid #334155', color: '#f8fafc', fontSize: 12, borderRadius: 6, padding: '6px 10px', outline: 'none' }}
-                >
-                  <option value="ALL">Todas las Clases ABC</option>
-                  <option value="A">Clase A (Top 70%)</option>
-                  <option value="B">Clase B (20%)</option>
-                  <option value="C">Clase C (10%)</option>
-                </select>
-              </div>
             </div>
-          </div>
 
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>StockCode</th>
-                  <th>Descripción</th>
-                  <th>Unidades Comercializadas</th>
-                  <th>Devoluciones</th>
-                  <th>Unidades Netas</th>
-                  <th>Demanda Prom. Mensual</th>
-                  <th>Precio Prom. (GBP)</th>
-                  <th>Clase ABC</th>
-                  <th>Ingresos Históricos</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCatalog.slice(0, 50).map((item, index) => (
-                  <tr key={`${item.stock_code}-${index}`}>
-                    <td><strong>{item.stock_code}</strong></td>
-                    <td style={{ maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {item.description || 'Sin descripción'}
-                    </td>
-                    <td>{Number(item.units_sold || 0).toLocaleString('en-US')}</td>
-                    <td style={{ color: Number(item.units_returned) > 0 ? '#f87171' : 'inherit' }}>
-                      {Number(item.units_returned || 0).toLocaleString('en-US')}
-                    </td>
-                    <td><strong>{Number(item.units_net || 0).toLocaleString('en-US')}</strong></td>
-                    <td>{Number(item.avg_monthly_demand || 0).toFixed(1)} u/mes</td>
-                    <td>£{Number(item.avg_unit_price || 0).toFixed(2)}</td>
-                    <td>
-                      <span className={`inventory-badge ${item.abc_class === 'A' ? 'fresh' : item.abc_class === 'B' ? 'stale' : 'warning'}`}>
-                        Clase {item.abc_class}
-                      </span>
-                    </td>
-                    <td><strong>{currencyGBP(item.gross_revenue_gbp)}</strong></td>
-                  </tr>
-                ))}
-                {filteredCatalog.length === 0 && (
+            <div className="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan="9" style={{ textAlign: 'center', padding: 24, color: '#94a3b8' }}>
-                      No se encontraron productos en el catálogo UCI con los filtros seleccionados.
-                    </td>
+                    <th>StockCode</th>
+                    <th>Descripción</th>
+                    <th>Unidades Comercializadas</th>
+                    <th>Devoluciones</th>
+                    <th>Unidades Netas</th>
+                    <th>Demanda Prom. Mensual</th>
+                    <th>Precio Prom. (GBP)</th>
+                    <th>Clase ABC</th>
+                    <th>Ingresos Históricos</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ marginTop: 10, fontSize: 11, color: '#64748b', textAlign: 'right' }}>
-            Mostrando {Math.min(filteredCatalog.length, 50)} de {filteredCatalog.length} productos coincidentes
-          </div>
-        </section>
-      </div>
+                </thead>
+                <tbody>
+                  {filteredCatalog.slice(0, 50).map((item, index) => (
+                    <tr key={`${item.stock_code}-${index}`}>
+                      <td><strong>{item.stock_code}</strong></td>
+                      <td style={{ maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {item.description || 'Sin descripción'}
+                      </td>
+                      <td>{Number(item.units_sold || 0).toLocaleString('en-US')}</td>
+                      <td style={{ color: Number(item.units_returned) > 0 ? '#f87171' : 'inherit' }}>
+                        {Number(item.units_returned || 0).toLocaleString('en-US')}
+                      </td>
+                      <td><strong>{Number(item.units_net || 0).toLocaleString('en-US')}</strong></td>
+                      <td>{Number(item.avg_monthly_demand || 0).toFixed(1)} u/mes</td>
+                      <td>£{Number(item.avg_unit_price || 0).toFixed(2)}</td>
+                      <td>
+                        <span className={`inventory-badge ${item.abc_class === 'A' ? 'fresh' : item.abc_class === 'B' ? 'stale' : 'warning'}`}>
+                          Clase {item.abc_class}
+                        </span>
+                      </td>
+                      <td><strong>{currencyGBP(item.gross_revenue_gbp)}</strong></td>
+                    </tr>
+                  ))}
+                  {filteredCatalog.length === 0 && (
+                    <tr>
+                      <td colSpan="9" style={{ textAlign: 'center', padding: 24, color: '#94a3b8' }}>
+                        No se encontraron productos en el catálogo UCI con los filtros seleccionados.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 10, fontSize: 11, color: '#64748b', textAlign: 'right' }}>
+              Mostrando {Math.min(filteredCatalog.length, 50)} de {filteredCatalog.length} productos coincidentes
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="inventory-footer" style={{ marginTop: 32 }}>

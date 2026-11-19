@@ -17,14 +17,60 @@ export const api = {
   products: () => get('/api/commercial/products'),
   logistics: () => get('/api/logistics/summary'),
   logisticsMonthly: () => get('/api/logistics/monthly'),
-  inventoryCurrent: (includeSynthetic = false) => get(`/api/inventory/current?include_synthetic=${includeSynthetic}`),
-  inventoryRisks: (includeSynthetic = false) => get(`/api/inventory/risks?include_synthetic=${includeSynthetic}`),
-  inventoryUciSummary: () => get('/api/inventory/uci/summary'),
-  inventoryUciCatalog: (limit = 100) => get(`/api/inventory/uci/catalog?limit=${limit}`),
-  inventoryUciCountry: () => get('/api/inventory/uci/country'),
-  inventoryUciMonthly: () => get('/api/inventory/uci/monthly'),
+  inventoryCurrent: (includeSynthetic = false, region = '', productId = '') => {
+    const params = new URLSearchParams({ include_synthetic: includeSynthetic });
+    if (region && region !== 'ALL') params.append('region', region);
+    if (productId && productId !== 'ALL') params.append('product_id', productId);
+    return get(`/api/inventory/current?${params.toString()}`);
+  },
+  inventoryRisks: (includeSynthetic = false, region = '', productId = '') => {
+    const params = new URLSearchParams({ include_synthetic: includeSynthetic });
+    if (region && region !== 'ALL') params.append('region', region);
+    if (productId && productId !== 'ALL') params.append('product_id', productId);
+    return get(`/api/inventory/risks?${params.toString()}`);
+  },
+  inventoryMetadata: (includeSynthetic = false) => get(`/api/inventory/metadata?include_synthetic=${includeSynthetic}`),
+  inventoryUciSummary: (country = '', stockCode = '', abcClass = '') => {
+    const params = new URLSearchParams();
+    if (country && country !== 'ALL') params.append('country', country);
+    if (stockCode && stockCode !== 'ALL') params.append('stock_code', stockCode);
+    if (abcClass && abcClass !== 'ALL') params.append('abc_class', abcClass);
+    return get(`/api/inventory/uci/summary?${params.toString()}`);
+  },
+  inventoryUciCatalog: (limit = 100, stockCode = '', abcClass = '', country = '') => {
+    const params = new URLSearchParams({ limit });
+    if (stockCode && stockCode !== 'ALL') params.append('stock_code', stockCode);
+    if (abcClass && abcClass !== 'ALL') params.append('abc_class', abcClass);
+    if (country && country !== 'ALL') params.append('country', country);
+    return get(`/api/inventory/uci/catalog?${params.toString()}`);
+  },
+  inventoryUciCountry: (country = '', stockCode = '') => {
+    const params = new URLSearchParams();
+    if (country && country !== 'ALL') params.append('country', country);
+    if (stockCode && stockCode !== 'ALL') params.append('stock_code', stockCode);
+    return get(`/api/inventory/uci/country?${params.toString()}`);
+  },
+  inventoryUciMonthly: (country = '', stockCode = '') => {
+    const params = new URLSearchParams();
+    if (country && country !== 'ALL') params.append('country', country);
+    if (stockCode && stockCode !== 'ALL') params.append('stock_code', stockCode);
+    return get(`/api/inventory/uci/monthly?${params.toString()}`);
+  },
   predictiveMetrics: () => get('/api/predictive/metrics'),
-  predictivePredictions: () => get('/api/predictive/predictions'),
+  predictivePredictions: (categoria = '') => {
+    const params = new URLSearchParams();
+    if (categoria && categoria !== 'ALL') params.append('categoria', categoria);
+    return get(`/api/predictive/predictions?${params.toString()}`);
+  },
+  predictiveMetadata: () => get('/api/predictive/metadata'),
+  predictiveForecast: ({ source = 'olist', category = '', sellerId = '', productId = '', country = '', horizon = 12 } = {}) => {
+    const params = new URLSearchParams({ source, horizon });
+    if (category && category !== 'ALL') params.append('category', category);
+    if (sellerId && sellerId !== 'ALL') params.append('seller_id', sellerId);
+    if (productId && productId !== 'ALL') params.append('product_id', productId);
+    if (country && country !== 'ALL') params.append('country', country);
+    return get(`/api/predictive/forecast?${params.toString()}`);
+  },
   storePerformance: () => get('/api/store/performance'),
   countries: () => get('/api/commercial/countries'),
   customersSummary: () => get('/api/commercial/customers_summary'),

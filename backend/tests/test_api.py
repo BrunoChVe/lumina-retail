@@ -323,5 +323,77 @@ class TestLuminaRetailAPI(unittest.TestCase):
             self.assertNotIn("CYBER", row.get("source_system", "").upper())
             self.assertNotIn("SYNTHETIC", row.get("source_system", "").upper())
 
+    def test_inventory_metadata(self):
+        """Valida que los metadatos para filtros dependientes de inventario se expongan correctamente."""
+        res = self.client.get("/api/inventory/metadata")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("operational_regions", data)
+        self.assertIn("operational_products", data)
+        self.assertIn("operational_region_product_map", data)
+        self.assertIn("uci_countries", data)
+        self.assertIn("Lima", data["operational_regions"])
+
+    def test_inventory_filters_region_and_product(self):
+        """Valida filtrado combinado por región y producto en inventario operativo."""
+        res = self.client.get("/api/inventory/current?region=Lima&product_id=P001")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        for row in data:
+            self.assertEqual(row["region"], "Lima")
+            self.assertEqual(row["product_id"], "P001")
+
+    def test_inventory_filter_nonexistent_combination(self):
+        """Valida que una combinación inexistente de región y producto devuelva lista vacía."""
+        res = self.client.get("/api/inventory/current?region=Lima&product_id=NON_EXISTENT_SKU")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(len(data), 0)
+
+    def test_predictive_metadata(self):
+        """Valida que los metadatos para filtros dependientes predictivos se expongan correctamente."""
+        res = self.client.get("/api/predictive/metadata")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("sources", data)
+        self.assertIn("categories", data)
+        self.assertIn("top_sellers", data)
+        self.assertIn("uci_countries", data)
+        self.assertIn("bed_bath_table", data["categories"])
+
+    def test_predictive_forecast_category_valid(self):
+        """Valida pronóstico por categoría con historial suficiente e intervalos de confianza."""
+        res = self.client.get("/api/predictive/forecast?source=olist&category=bed_bath_table&horizon=12")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("sufficient_history"))
+        self.assertEqual(data.get("target"), "bed_bath_table")
+        self.assertIn("avg_demand", data)
+        self.assertIn("trend", data)
+        self.assertIn("variability_std", data)
+        self.assertIn("metrics", data)
+        self.assertIn("forecast", data)
+        self.assertGreater(len(data["forecast"]), 0)
+        self.assertIn("lower_bound", data["forecast"][0])
+        self.assertIn("upper_bound", data["forecast"][0])
+
+    def test_predictive_forecast_insufficient_history(self):
+        """Valida que una combinación con historial insuficiente reporte error estadístico controlado."""
+        res = self.client.get("/api/predictive/forecast?source=olist&seller_id=fake_seller_id&product_id=fake_prod_id")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertFalse(data.get("sufficient_history"))
+        self.assertIn("Historial insuficiente", data.get("reason", ""))
+
+    def test_predictive_forecast_uci_country(self):
+        """Valida pronóstico de demanda empírica para UCI por país."""
+        res = self.client.get("/api/predictive/forecast?source=uci&country=United+Kingdom&horizon=8")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("sufficient_history"))
+        self.assertEqual(data.get("country"), "United Kingdom")
+        self.assertIn("forecast", data)
+
 if __name__ == "__main__":
     unittest.main()
