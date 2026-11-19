@@ -14,6 +14,7 @@ PROJECT_ID = (
 )
 DATASET = os.getenv("BQ_DATASET") or os.getenv("DATASET", "lumina_stage")
 STREAMING_DATASET = os.getenv("STREAMING_DATASET", "lumina_streaming")
+WAP_DATASET = os.getenv("WAP_DATASET", "lumina_sandbox")
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -36,7 +37,7 @@ app.add_middleware(
 )
 
 
-def execute_query(sql):
+def execute_query(sql, domain_check=None):
     try:
         rows = client.query(sql).result()
         output = []
@@ -51,8 +52,23 @@ def execute_query(sql):
                 item[key] = value
             output.append(item)
 
+        if domain_check and len(output) == 0:
+            check_sql = f"""
+                SELECT current_run_id, status
+                FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+                WHERE domain = '{domain_check}'
+            """
+            chk = list(client.query(check_sql).result())
+            if not chk or chk[0]["status"] != "PUBLISHED" or not chk[0]["current_run_id"]:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"No existe una versión publicada válida para el dominio '{domain_check}' en {WAP_DATASET}."
+                )
+
         return output
 
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -75,45 +91,105 @@ def commercial_summary():
             source_system,
             source_label,
             currency_code,
-            currency_status,
+            CASE source_system
+                WHEN 'olist' THEN 'documented'
+                WHEN 'thelook' THEN 'user_confirmed'
+                WHEN 'uci' THEN 'documented'
+                ELSE 'unverified'
+            END AS currency_status,
             SUM(total_orders) AS total_orders,
             SUM(total_items) AS total_items,
-            SUM(total_product_sales) AS total_product_sales,
+            ROUND(SUM(total_product_sales), 2) AS total_product_sales,
             SUM(completed_orders) AS completed_orders,
-            SUM(completed_product_sales) AS completed_product_sales
-        FROM `{PROJECT_ID}.{DATASET}.vw_commercial_dashboard_final_v1`
+            ROUND(SUM(completed_product_sales), 2) AS completed_product_sales
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_commercial_monthly`
+        WHERE run_id = (
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'commercial' AND status = 'PUBLISHED'
+        )
         GROUP BY 1, 2, 3, 4
         ORDER BY source_system
-    """)
+    """, domain_check="commercial")
 
 
 @app.get("/api/commercial/monthly")
 def commercial_monthly():
     return execute_query(f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET}.vw_commercial_monthly_final_v1`
+        SELECT
+            source_system,
+            source_label,
+            currency_code,
+            order_month,
+            total_orders,
+            total_items,
+            total_product_sales,
+            completed_orders,
+            completed_items,
+            completed_product_sales,
+            avg_completed_order_value,
+            completed_order_rate_pct,
+            completed_sales_share_pct
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_commercial_monthly`
+        WHERE run_id = (
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'commercial' AND status = 'PUBLISHED'
+        )
         ORDER BY order_month, source_system
-    """)
+    """, domain_check="commercial")
 
 
 @app.get("/api/commercial/categories")
 def commercial_categories():
     return execute_query(f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET}.vw_commercial_category_performance_v1`
-        WHERE category_rank <= 15
+        SELECT
+            source_system,
+            currency_code,
+            category,
+            category_rank,
+            items_sold,
+            distinct_products,
+            orders,
+            total_sales,
+            avg_item_price,
+            sales_share_pct
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_commercial_categories`
+        WHERE run_id = (
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'commercial' AND status = 'PUBLISHED'
+        )
+        AND category_rank <= 15
         ORDER BY source_system, category_rank
-    """)
+    """, domain_check="commercial")
 
 
 @app.get("/api/commercial/products")
 def commercial_products():
     return execute_query(f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET}.vw_commercial_product_performance_v1`
-        WHERE sales_rank <= 20
+        SELECT
+            source_system,
+            source_product_id,
+            product_name,
+            category,
+            brand,
+            department,
+            items_sold,
+            orders,
+            total_sales,
+            avg_item_price,
+            currency_code,
+            sales_rank
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_commercial_products`
+        WHERE run_id = (
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'commercial' AND status = 'PUBLISHED'
+        )
+        AND sales_rank <= 20
         ORDER BY source_system, sales_rank
-    """)
+    """, domain_check="commercial")
 
 
 @app.get("/api/logistics/summary")
@@ -154,19 +230,51 @@ def logistics_summary():
                 THEN 'available'
                 ELSE 'not_available'
             END AS late_delivery_data_status
-        FROM `{PROJECT_ID}.{DATASET}.vw_logistics_dashboard_final_v1`
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_logistics_dashboard`
+        WHERE run_id = (
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'logistics' AND status = 'PUBLISHED'
+        )
         GROUP BY source_system, source_label
         ORDER BY source_system
-    """)
+    """, domain_check="logistics")
 
 
 @app.get("/api/logistics/monthly")
 def logistics_monthly():
     return execute_query(f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET}.vw_logistics_dashboard_final_v1`
+        SELECT
+            source_system,
+            order_cohort_month,
+            source_label,
+            total_orders,
+            valid_shipments,
+            valid_deliveries,
+            deliveries_with_estimate,
+            late_deliveries,
+            valid_returns,
+            invalid_shipping_sequence,
+            invalid_delivery_sequence,
+            delivery_without_shipment,
+            future_shipments,
+            future_deliveries,
+            future_returns,
+            avg_shipping_hours,
+            avg_delivery_hours,
+            shipment_coverage_pct,
+            delivery_coverage_pct,
+            late_delivery_rate_pct,
+            late_delivery_data_status,
+            calculated_at
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_logistics_dashboard`
+        WHERE run_id = (
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'logistics' AND status = 'PUBLISHED'
+        )
         ORDER BY order_cohort_month, source_system
-    """)
+    """, domain_check="logistics")
 
 
 
@@ -226,15 +334,14 @@ def predictive_metrics():
             n_test_rows,
             evaluated_at,
             evaluation_type
-        FROM `{PROJECT_ID}.{DATASET}.model_evaluation_metrics`
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_predictive_metrics`
         WHERE run_id = (
-            SELECT run_id
-            FROM `{PROJECT_ID}.{DATASET}.model_evaluation_metrics`
-            ORDER BY evaluated_at DESC
-            LIMIT 1
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'predictive' AND status = 'PUBLISHED'
         )
         ORDER BY metric
-    """)
+    """, domain_check="predictive")
 
 
 @app.get("/api/predictive/predictions")
@@ -246,15 +353,14 @@ def predictive_predictions():
             actual,
             prediccion,
             error_absoluto
-        FROM `{PROJECT_ID}.{DATASET}.model_evaluation_predictions`
+        FROM `{PROJECT_ID}.{WAP_DATASET}.gold_predictive_predictions`
         WHERE run_id = (
-            SELECT run_id
-            FROM `{PROJECT_ID}.{DATASET}.model_evaluation_metrics`
-            ORDER BY evaluated_at DESC
-            LIMIT 1
+            SELECT current_run_id
+            FROM `{PROJECT_ID}.{WAP_DATASET}.gold_release_control`
+            WHERE domain = 'predictive' AND status = 'PUBLISHED'
         )
         ORDER BY semana, categoria
-    """)
+    """, domain_check="predictive")
 
 
 # Frontend React compilado con Vite (Docker: /app/frontend/dist; Local: ../frontend/dist)

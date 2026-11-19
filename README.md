@@ -231,18 +231,26 @@ Durante la evaluación se verificaron:
 - Pruebas automatizadas locales: **19/19 pruebas reportadas aprobadas** (11 en `backend/tests/test_api.py` y 8 en `backend/tests/test_uci_processing.py`).
 
 ### Distinción entre entorno local y producción (Cloud Run)
-- **Capacidades operativas locales:**
-  - Backend FastAPI con 11 endpoints activos conectados a BigQuery.
-  - Frontend React 19 compilado con 6 módulos: Overview, Commercial, Logistics, Sources (con Olist, TheLook y UCI), Inventory y Predictive.
-  - Integración analítica de la tercera fuente UCI Online Retail (541,909 registros en `stg_uci_online_retail`, `vw_uci_commercial_monthly` y `vw_sales_multisource_with_uci`).
-  - 19/19 pruebas automatizadas aprobadas.
-- **Capacidades desplegadas en Cloud Run (Revisión v1 activa):**
-  - Despliegue inicial limitado a 7 endpoints comerciales y logísticos sobre Olist y TheLook.
-  - Los módulos de telemetría de inventario en tiempo real, predicción de demanda de Machine Learning y la integración de UCI Online Retail **no se encuentran desplegados en el servicio Cloud Run**, requiriendo una nueva construcción de imagen Docker y despliegue para reflejarse en la URL pública.
+- **Capacidades operativas locales y Gold WAP:**
+  - Backend FastAPI con 11 endpoints activos gobernados y conectados a BigQuery (`lumina_sandbox` y `lumina_streaming`).
+  - Implementación del protocolo **Write-Audit-Publish (WAP-02.1)** con control de concurrencia optimista (OCC), *fencing tokens* monotónicos, *leasing* y 15 scripts SQL.
+  - **4/4 Dominios publicados en Gold:** Commercial, Logistics, Inventory y Predictive con 16/16 auditorías superadas al 100%.
+  - Frontend React 19 compilado con 6 módulos: Overview, Commercial, Logistics, Sources (Olist, TheLook y UCI), Inventory (tiempo real + telemetría) y Predictive (WAP Gold + Benchmarks).
+  - Integración analítica completa de UCI Online Retail (541,909 registros en `stg_uci_online_retail`, `vw_uci_commercial_monthly` y `vw_sales_multisource_with_uci`).
+  - Suite de pruebas automatizadas: **52/52 pruebas aprobadas** (17 de aceptación WAP, 13 de API y contratos, y 22 de salvaguardas, ETL y machine learning).
+- **Capacidades desplegadas en Cloud Run:**
+  - Servicio `lumina-retail` en `us-central1`.
+  - Revisión `wap-gold-final` con soporte para los 11 endpoints, interfaz de usuario completa y gobernanza WAP activa con 100% del tráfico asignado.
 
 Estas comprobaciones no equivalen a una auditoría integral de seguridad ni a una medición exhaustiva de cobertura de líneas mediante herramientas de cobertura de código.
 
-## 12. Limitaciones y mejoras futuras
+## 12. Gobernanza WAP y Control de Versiones
+
+El acceso a los datos analíticos Gold está condicionado a la existencia de una versión activa en `lumina_sandbox.gold_release_control`:
+- Si un dominio no ha sido publicado o se encuentra en estado `EMPTY`, la API devuelve un código de error controlado `HTTP 503 Service Unavailable`.
+- En caso de anomalías en producción, el script `scripts/wap/06_wap_rollback.sql` permite restituir la versión anterior de forma inmediata e idempotente.
+
+## 13. Limitaciones y mejoras futuras
 
 - Incorporar pruebas automatizadas.
 - Parametrizar la configuración del backend.

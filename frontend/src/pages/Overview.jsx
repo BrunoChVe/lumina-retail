@@ -18,6 +18,7 @@ export default function Overview({ commercial, logistics, monthly }) {
 
   const olist = monthly.filter(x => x.source_system === 'olist');
   const thelook = monthly.filter(x => x.source_system === 'thelook');
+  const uci = monthly.filter(x => x.source_system === 'uci');
 
   return (
     <>
@@ -25,7 +26,7 @@ export default function Overview({ commercial, logistics, monthly }) {
         <div>
           <span className="eyebrow">VISIÓN GENERAL</span>
           <h2>Inteligencia para mejores decisiones.</h2>
-          <p>Información comercial y logística de múltiples fuentes.</p>
+          <p>Información comercial y logística multisource auditada y gobernada.</p>
         </div>
       </div>
 
@@ -43,7 +44,7 @@ export default function Overview({ commercial, logistics, monthly }) {
       <div className="section-heading">
         <div>
           <h2>Evolución comercial</h2>
-          <p>Ventas mensuales por fuente, sin mezclar monedas</p>
+          <p>Ventas mensuales por fuente, sin mezclar monedas (Aislamiento de divisas BRL, USD y GBP)</p>
         </div>
       </div>
 
@@ -51,9 +52,10 @@ export default function Overview({ commercial, logistics, monthly }) {
         <div className="legend">
           <span><i className="olist" /> Olist (BRL)</span>
           <span><i className="thelook" /> TheLook (USD)</span>
+          <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#8B5CF6', marginRight: 6 }} /> UCI Online Retail (GBP)</span>
         </div>
 
-        <div className="chart-grid">
+        <div className="chart-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
           <div>
             <h3>Olist · BRL</h3>
             <ResponsiveContainer width="100%" height={250}>
@@ -76,6 +78,19 @@ export default function Overview({ commercial, logistics, monthly }) {
                 <YAxis />
                 <Tooltip />
                 <Line dataKey="total_product_sales" stroke="#10B981"
+                  strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div>
+            <h3>UCI Online Retail · GBP</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={uci}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="order_month" tick={{ fontSize: 10 }} />
+                <YAxis />
+                <Tooltip />
+                <Line dataKey="total_product_sales" stroke="#8B5CF6"
                   strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>

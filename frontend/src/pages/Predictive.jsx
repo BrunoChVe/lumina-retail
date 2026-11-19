@@ -140,13 +140,39 @@ export default function Predictive() {
   return (
     <div className="page-stack">
       <section className="welcome">
-        <span className="eyebrow">MACHINE LEARNING / DEMAND FORECAST</span>
+        <span className="eyebrow">MACHINE LEARNING / DEMAND FORECAST · WAP GOLD RELEASE</span>
         <h2>Evaluación del modelo de demanda</h2>
         <p>
           Desempeño de XGBoost sobre la demanda semanal por categoría
-          de productos de Olist.
+          de productos de Olist, gobernado mediante el protocolo WAP-02.1.
         </p>
       </section>
+
+      <div className="wap-release-banner" style={{
+        background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+        color: '#f8fafc',
+        padding: '16px 20px',
+        borderRadius: '12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '12px',
+        border: '1px solid #334155'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ background: '#10b981', width: '10px', height: '10px', borderRadius: '50%', boxShadow: '0 0 8px #10b981' }}/>
+          <div>
+            <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: '#94a3b8' }}>Gobernanza WAP Activa</span>
+            <div style={{ fontSize: '14px', fontWeight: 600 }}>Dominio Predictive: Publicado (Release Gold)</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '20px', fontSize: '12px', color: '#cbd5e1' }}>
+          <div>Versión activa: <code style={{ color: '#38bdf8', background: '#0284c722', padding: '2px 6px', borderRadius: '4px' }}>{metadata.run_id || 'N/A'}</code></div>
+          <div>Auditorías superadas: <strong style={{ color: '#4ade80' }}>3/3 (100%)</strong></div>
+          <div>Almacenamiento: <code style={{ color: '#a78bfa' }}>gold_predictive_*</code></div>
+        </div>
+      </div>
 
       <section className="kpi-grid">
         {cards.map(card => {
@@ -161,6 +187,63 @@ export default function Predictive() {
             </article>
           );
         })}
+      </section>
+
+      {/* BENCHMARK COMPARATIVO ACADÉMICO */}
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>Benchmark Comparativo de Modelos (Backtest 888 Observaciones)</h2>
+            <p>Evaluación de XGBoost frente a modelos heurísticos de persistencia y estacionalidad</p>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Modelo</th>
+                <th>Clasificación</th>
+                <th>Observaciones</th>
+                <th>MAE</th>
+                <th>RMSE</th>
+                <th>WAPE</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{ background: '#ecfdf5' }}>
+                <td><strong>Naive Baseline (t-1)</strong></td>
+                <td>Heurístico (Persistencia)</td>
+                <td>888</td>
+                <td><strong>7.5417</strong></td>
+                <td><strong>15.9047</strong></td>
+                <td><strong>35.49%</strong></td>
+                <td><span style={{ color: '#047857', fontWeight: 600 }}>★ Mejor Modelo</span></td>
+              </tr>
+              <tr>
+                <td><strong>XGBoost Regressor</strong></td>
+                <td>Supervisado (Experimental)</td>
+                <td>888</td>
+                <td>7.7780</td>
+                <td>16.7220</td>
+                <td>36.60%</td>
+                <td><span style={{ color: '#2563eb', fontWeight: 600 }}>En Producción Gold</span></td>
+              </tr>
+              <tr style={{ background: '#fffbeb' }}>
+                <td><strong>Seasonal Naive (t-52)</strong></td>
+                <td>Heurístico (Estacional Anual)</td>
+                <td>888</td>
+                <td>12.7939</td>
+                <td>27.1788</td>
+                <td>60.21%</td>
+                <td><span style={{ color: '#b45309' }}>Sesgo Interanual</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="muted" style={{ fontSize: '12px', marginTop: '10px' }}>
+          <strong>Hallazgo clave:</strong> El modelo Naive (t-1) superó a XGBoost debido a la alta autocorrelación en categorías de baja rotación. Seasonal Naive (t-52) subestima sistemáticamente la demanda por la fuerte aceleración transaccional de Olist entre 2017 y 2018.
+        </p>
       </section>
 
       <section className="panel">

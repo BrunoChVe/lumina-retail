@@ -45,6 +45,7 @@ export default function Commercial() {
           <option value="all">Todas las fuentes</option>
           <option value="olist">Olist · BRL</option>
           <option value="thelook">TheLook · USD</option>
+          <option value="uci">UCI Online Retail · GBP</option>
         </select>
       </div>
 
@@ -56,21 +57,37 @@ export default function Commercial() {
           </div>
         </div>
 
-        {['olist', 'thelook'].filter(s => source === 'all' || source === s).map(s => {
+        {['olist', 'thelook', 'uci'].filter(s => source === 'all' || source === s).map(s => {
           const rows = filter(categories)
             .filter(x => x.source_system === s)
             .sort((a, b) => a.category_rank - b.category_rank);
 
+          const sourceNames = {
+            olist: 'Olist · BRL',
+            thelook: 'TheLook · USD',
+            uci: 'UCI Online Retail · GBP'
+          };
+          const sourceColors = {
+            olist: '#3B82F6',
+            thelook: '#10B981',
+            uci: '#8B5CF6'
+          };
+          const sourceCurrencies = {
+            olist: 'BRL',
+            thelook: 'USD',
+            uci: 'GBP'
+          };
+
           return (
             <div className="chart-section" key={s}>
-              <h3>{s === 'olist' ? 'Olist · BRL' : 'TheLook · USD'}</h3>
+              <h3>{sourceNames[s]}</h3>
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={rows.slice(0, 10)} layout="vertical" margin={{left: 20}}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
                   <XAxis type="number"/>
                   <YAxis type="category" dataKey="category" width={145} tick={{fontSize: 11}}/>
-                  <Tooltip formatter={v => currency(v, s === 'olist' ? 'BRL' : 'USD')}/>
-                  <Bar dataKey="total_sales" fill={s === 'olist' ? '#3B82F6' : '#10B981'} radius={[0,4,4,0]}/>
+                  <Tooltip formatter={v => currency(v, sourceCurrencies[s])}/>
+                  <Bar dataKey="total_sales" fill={sourceColors[s]} radius={[0,4,4,0]}/>
                 </BarChart>
               </ResponsiveContainer>
             </div>
