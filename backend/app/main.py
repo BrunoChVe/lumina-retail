@@ -281,7 +281,8 @@ def logistics_monthly():
 
 
 @app.get("/api/inventory/current")
-def inventory_current():
+def inventory_current(include_synthetic: bool = False):
+    where_clause = "" if include_synthetic else "WHERE (region IS NULL OR region != 'CYBER_TEST')"
     return execute_query(f"""
         SELECT
             product_id,
@@ -297,12 +298,14 @@ def inventory_current():
                 ELSE 'NORMAL'
             END AS estado_stock
         FROM `{PROJECT_ID}.{STREAMING_DATASET}.stock_actual_vw`
+        {where_clause}
         ORDER BY stock_registrado ASC, product_id, region
     """)
 
 
 @app.get("/api/inventory/risks")
-def inventory_risks():
+def inventory_risks(include_synthetic: bool = False):
+    where_clause = "" if include_synthetic else "WHERE (region IS NULL OR region != 'CYBER_TEST')"
     return execute_query(f"""
         SELECT
             product_id,
@@ -315,11 +318,36 @@ def inventory_risks():
             eventos_stock_bajo,
             porcentaje_alertas
         FROM `{PROJECT_ID}.{STREAMING_DATASET}.stock_risk_by_product_region`
-        WHERE (region IS NULL OR region != 'CYBER_TEST')
+        {where_clause}
         ORDER BY alertas_criticas DESC, stock_minimo ASC
     """)
 
 
+
+@app.get("/api/inventory/uci/catalog")
+def inventory_uci_catalog():
+    return execute_query(f"""
+        SELECT * FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_product_catalog`
+        ORDER BY gross_revenue_gbp DESC
+        LIMIT 100
+    """, domain_check="commercial")
+
+@app.get("/api/inventory/uci/country")
+def inventory_uci_country():
+    return execute_query(f"""
+        SELECT * FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_inventory_country`
+        ORDER BY gross_revenue_gbp DESC
+        LIMIT 100
+    """, domain_check="commercial")
+
+@app.get("/api/inventory/uci/monthly")
+def inventory_uci_monthly():
+    return execute_query(f"""
+        SELECT sales_month, SUM(units_sold) as total_units_sold, SUM(gross_revenue_gbp) as total_revenue
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_inventory_monthly`
+        GROUP BY sales_month
+        ORDER BY sales_month
+    """, domain_check="commercial")
 
 @app.get("/api/predictive/metrics")
 def predictive_metrics():

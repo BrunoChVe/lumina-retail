@@ -182,12 +182,54 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertIsInstance(data, list)
         self.assertEqual(len(data), 26)
 
+    def test_inventory_current_synthetic(self):
+        """Verifica que inventory/current devuelve los 36 registros al incluir sintéticos."""
+        res = self.client.get("/api/inventory/current?include_synthetic=true")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 36)
+
     def test_inventory_risks_unaffected(self):
         res = self.client.get("/api/inventory/risks")
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertIsInstance(data, list)
         self.assertEqual(len(data), 26)
+
+    def test_inventory_risks_synthetic(self):
+        """Verifica que inventory/risks devuelve los 36 registros al incluir sintéticos."""
+        res = self.client.get("/api/inventory/risks?include_synthetic=true")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 36)
+
+    def test_inventory_uci_catalog(self):
+        """Verifica que el catálogo analítico de UCI devuelve datos y clasificación ABC."""
+        res = self.client.get("/api/inventory/uci/catalog")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        if len(data) > 0:
+            self.assertIn("stock_code", data[0])
+            self.assertIn("abc_class", data[0])
+
+    def test_inventory_uci_country(self):
+        """Verifica que el inventario por país de UCI funcione correctamente."""
+        res = self.client.get("/api/inventory/uci/country")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        if len(data) > 0:
+            self.assertIn("country", data[0])
+
+    def test_inventory_uci_monthly(self):
+        """Verifica la evolución mensual de demanda de UCI."""
+        res = self.client.get("/api/inventory/uci/monthly")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
 
     def test_predictive_metrics_unaffected(self):
         """Valida las 3 métricas de evaluación del modelo LightGBM en Gold WAP."""
@@ -252,6 +294,19 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertEqual(res.status_code, 503)
         self.assertIn("No existe una versión publicada válida para el dominio 'predictive'", res.json()["detail"])
 
+    def test_commercial_and_logistics_exclude_synthetic(self):
+        """Verifica que los endpoints comerciales y logísticos no contengan datos sintéticos."""
+        res_com = self.client.get("/api/commercial/summary")
+        self.assertEqual(res_com.status_code, 200)
+        for row in res_com.json():
+            self.assertNotIn("CYBER", row.get("source_system", "").upper())
+            self.assertNotIn("SYNTHETIC", row.get("source_system", "").upper())
+            
+        res_log = self.client.get("/api/logistics/summary")
+        self.assertEqual(res_log.status_code, 200)
+        for row in res_log.json():
+            self.assertNotIn("CYBER", row.get("source_system", "").upper())
+            self.assertNotIn("SYNTHETIC", row.get("source_system", "").upper())
 
 if __name__ == "__main__":
     unittest.main()

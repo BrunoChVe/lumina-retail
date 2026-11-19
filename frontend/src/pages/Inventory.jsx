@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Package, AlertTriangle, Clock, Activity } from 'lucide-react';
+import { RefreshCw, Package, AlertTriangle, Clock, Activity, Target } from 'lucide-react';
 import { api } from '../services/api';
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis,
+  Tooltip, CartesianGrid
+} from 'recharts';
 
 function formatDate(value) {
   if (!value) return 'Sin registro';
@@ -13,9 +17,19 @@ function freshnessLabel(value) {
   return 'Sin fecha';
 }
 
+const currency = (value, code) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: code || 'GBP',
+    maximumFractionDigits: 0
+  }).format(value || 0);
+
 export default function Inventory() {
   const [current, setCurrent] = useState([]);
   const [risks, setRisks] = useState([]);
+  const [uciCatalog, setUciCatalog] = useState([]);
+  const [uciCountry, setUciCountry] = useState([]);
+  const [uciMonthly, setUciMonthly] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -25,20 +39,26 @@ export default function Inventory() {
     setError('');
 
     try {
-      const [stockData, riskData] = await Promise.all([
-        api.inventoryCurrent(),
-        api.inventoryRisks()
+      const [stockData, riskData, catData, ctryData, moData] = await Promise.all([
+        api.inventoryCurrent(showCyber),
+        api.inventoryRisks(showCyber),
+        api.inventoryUciCatalog(),
+        api.inventoryUciCountry(),
+        api.inventoryUciMonthly()
       ]);
 
       setCurrent(stockData);
       setRisks(riskData);
+      setUciCatalog(catData);
+      setUciCountry(ctryData);
+      setUciMonthly(moData);
       setLastRefresh(new Date());
     } catch (e) {
       setError(e.message || 'No se pudo consultar el inventario.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showCyber]);
 
   useEffect(() => {
     loadInventory();
@@ -46,8 +66,8 @@ export default function Inventory() {
     return () => clearInterval(interval);
   }, [loadInventory]);
 
-  const filteredCurrent = showCyber ? current : current.filter(x => x.region !== 'CYBER_TEST');
-  const filteredRisks = showCyber ? risks : risks.filter(x => x.region !== 'CYBER_TEST');
+  const filteredCurrent = current;
+  const filteredRisks = risks;
 
   const critical = filteredCurrent.filter(x => Number(x.stock_registrado) < 10).length;
   const low = filteredCurrent.filter(x =>
@@ -265,6 +285,122 @@ export default function Inventory() {
               </small>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="inventory-heading" style={{ marginTop: '32px' }}>
+        <div>
+          <h2>Inventario analítico y demanda histórica — UCI Online Retail</h2>
+          <p className="muted">
+            UCI Online Retail proporciona registros históricos de transacciones. Los indicadores de este apartado representan actividad comercial y demanda histórica, no existencias físicas disponibles.
+          </p>
+        </div>
+      </section>
+
+      <section className="kpi-grid inventory-kpis">
+        <div className="panel inventory-kpi">
+          <div className="inventory-kpi-icon"><Package size={20}/></div>
+          <span>Productos</span>
+          <strong>{uciCatalog.length}</strong>
+          <small>Identificados en catálogo</small>
+        </div>
+        <div className="panel inventory-kpi">
+          <div className="inventory-kpi-icon"><Activity size={20}/></div>
+          <span>Demanda Mensual</span>
+          <strong>
+            {uciCatalog.length > 0 
+              ? Math.round(uciCatalog.reduce((sum, item) => sum + (Number(item.avg_monthly_demand) || 0), 0) / uciCatalog.length)
+              : 0}
+          </strong>
+          <small>Unidades promedio/mes por SKU</small>
+        </div>
+        <div className="panel inventory-kpi">
+          <div className="inventory-kpi-icon"><Target size={20}/></div>
+          <span>Devoluciones</span>
+          <strong>
+            {uciCatalog.length > 0 
+              ? Number(uciCatalog.reduce((sum, item) => sum + (Number(item.units_returned) || 0), 0)).toLocaleString('en-US')
+              : 0}
+          </strong>
+          <small>Unidades históricas</small>
+        </div>
+        <div className="panel inventory-kpi">
+          <div className="inventory-kpi-icon"><Target size={20}/></div>
+          <span>Mercados</span>
+          <strong>
+            {new Set(uciCountry.map(c => c.country)).size}
+          </strong>
+          <small>Países activos</small>
+        </div>
+      </section>
+
+      <section className="panel" style={{ marginTop: '20px' }}>
+        <div className="inventory-section-title">
+          <div>
+            <h3>Catálogo analítico de productos (UCI)</h3>
+            <p className="muted">Top 100 productos de mayor rotación comercial en el registro transaccional.</p>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Código (StockCode)</th>
+                <th>Descripción</th>
+                <th>Unid. Vendidas</th>
+                <th>Devueltas</th>
+                <th>Netas</th>
+                <th>Demanda Prom. Mensual</th>
+                <th>Clase ABC</th>
+                <th>Ingresos Históricos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {uciCatalog.map((item, index) => (
+                <tr key={`${item.stock_code}-${index}`}>
+                  <td><strong>{item.stock_code}</strong></td>
+                  <td>{item.description || 'N/A'}</td>
+                  <td>{item.units_sold}</td>
+                  <td>{item.units_returned}</td>
+                  <td><strong>{item.units_net}</strong></td>
+                  <td>{Number(item.avg_monthly_demand || 0).toFixed(1)}</td>
+                  <td>
+                    <span className={`inventory-badge ${item.abc_class === 'A' ? 'fresh' : item.abc_class === 'B' ? 'stale' : 'warning'}`}>
+                      {item.abc_class}
+                    </span>
+                  </td>
+                  <td>{currency(item.gross_revenue_gbp, 'GBP')}</td>
+                </tr>
+              ))}
+              {uciCatalog.length === 0 && (
+                <tr><td colSpan="8">No hay registros analíticos disponibles para UCI.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel" style={{ marginTop: '20px' }}>
+        <div className="inventory-section-title">
+          <div>
+            <h3>Evolución histórica de demanda (UCI)</h3>
+            <p className="muted">Curva de demanda global en el periodo transaccional reportado (Dic 2010 - Dic 2011).</p>
+          </div>
+        </div>
+        <div className="chart-box" style={{ height: 300 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={uciMonthly}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155"/>
+              <XAxis dataKey="sales_month" stroke="#94a3b8" fontSize={12} tickFormatter={v => value => new Date(value).toLocaleDateString('es-PE', { month: 'short', year: '2-digit' })} />
+              <YAxis stroke="#94a3b8" fontSize={12} />
+              <Tooltip
+                contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }}
+                itemStyle={{ color: '#e2e8f0' }}
+                labelFormatter={v => new Date(v).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })}
+              />
+              <Line type="monotone" dataKey="total_units_sold" name="Unidades Vendidas" stroke="#818cf8" strokeWidth={3} dot={{ r: 4, fill: '#818cf8', strokeWidth: 0 }} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </section>
 
