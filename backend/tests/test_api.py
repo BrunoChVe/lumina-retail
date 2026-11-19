@@ -205,6 +205,21 @@ class TestLuminaRetailAPI(unittest.TestCase):
         self.assertIsInstance(data, list)
         self.assertEqual(len(data), 36)
 
+    def test_inventory_uci_summary(self):
+        """Verifica que el resumen analítico de UCI devuelve KPIs principales y conteos ABC."""
+        res = self.client.get("/api/inventory/uci/summary")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        self.assertTrue(len(data) > 0)
+        row = data[0]
+        self.assertIn("total_products", row)
+        self.assertIn("total_units_sold", row)
+        self.assertIn("total_units_returned", row)
+        self.assertIn("total_revenue_gbp", row)
+        self.assertIn("total_countries", row)
+        self.assertIn("count_a", row)
+
     def test_inventory_uci_catalog(self):
         """Verifica que el catálogo analítico de UCI devuelve datos y clasificación ABC."""
         res = self.client.get("/api/inventory/uci/catalog")

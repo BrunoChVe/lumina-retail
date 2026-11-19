@@ -324,26 +324,61 @@ def inventory_risks(include_synthetic: bool = False):
 
 
 
+@app.get("/api/inventory/uci/summary")
+def inventory_uci_summary():
+    return execute_query(f"""
+        SELECT 
+            COUNT(DISTINCT stock_code) as total_products,
+            SUM(units_sold) as total_units_sold,
+            SUM(units_returned) as total_units_returned,
+            SUM(units_net) as total_units_net,
+            ROUND(SUM(gross_revenue_gbp), 2) as total_revenue_gbp,
+            (SELECT COUNT(DISTINCT country) FROM `{PROJECT_ID}.lumina_stage.stg_uci_online_retail`) as total_countries,
+            MIN(first_sale_date) as min_date,
+            MAX(last_sale_date) as max_date,
+            COUNTIF(abc_class = 'A') as count_a,
+            COUNTIF(abc_class = 'B') as count_b,
+            COUNTIF(abc_class = 'C') as count_c
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_product_catalog`
+    """, domain_check="commercial")
+
+
 @app.get("/api/inventory/uci/catalog")
-def inventory_uci_catalog():
+def inventory_uci_catalog(limit: int = 100):
+    safe_limit = min(max(limit, 1), 500)
     return execute_query(f"""
         SELECT * FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_product_catalog`
         ORDER BY gross_revenue_gbp DESC
-        LIMIT 100
+        LIMIT {safe_limit}
     """, domain_check="commercial")
+
 
 @app.get("/api/inventory/uci/country")
 def inventory_uci_country():
     return execute_query(f"""
-        SELECT * FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_inventory_country`
-        ORDER BY gross_revenue_gbp DESC
-        LIMIT 100
+        SELECT 
+            country,
+            SUM(units_sold) as total_units_sold,
+            SUM(units_returned) as total_units_returned,
+            SUM(units_net) as total_units_net,
+            ROUND(SUM(gross_revenue_gbp), 2) as total_revenue,
+            COUNT(DISTINCT stock_code) as distinct_products
+        FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_inventory_country`
+        GROUP BY country
+        ORDER BY total_units_sold DESC
+        LIMIT 15
     """, domain_check="commercial")
+
 
 @app.get("/api/inventory/uci/monthly")
 def inventory_uci_monthly():
     return execute_query(f"""
-        SELECT sales_month, SUM(units_sold) as total_units_sold, SUM(gross_revenue_gbp) as total_revenue
+        SELECT 
+            sales_month, 
+            SUM(units_sold) as total_units_sold, 
+            SUM(units_returned) as total_units_returned, 
+            SUM(units_net) as total_units_net,
+            ROUND(SUM(gross_revenue_gbp), 2) as total_revenue
         FROM `{PROJECT_ID}.{WAP_DATASET}.vw_uci_analytical_inventory_monthly`
         GROUP BY sales_month
         ORDER BY sales_month
