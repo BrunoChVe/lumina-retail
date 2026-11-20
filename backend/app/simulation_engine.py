@@ -178,6 +178,107 @@ def validate_simulation_config(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+
+def _load_synthetic_catalog(num_products: int) -> Dict[str, Any]:
+    """Carga el catálogo sintético desde BigQuery, o genera un fallback si falla."""
+    import os
+    from google.cloud import bigquery
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "lumina-retail-001")
+    inventory_state = {}
+    try:
+        client = bigquery.Client(project=project_id)
+        query = f'''
+            SELECT p.sku, p.product_name, p.unit_price, i.initial_stock
+            FROM `{project_id}.lumina_sandbox.products_catalog` p
+            JOIN `{project_id}.lumina_sandbox.inventory_initial` i ON p.sku = i.sku
+            ORDER BY RAND()
+            LIMIT {num_products}
+        '''
+        res = list(client.query(query).result())
+        for row in res:
+            inventory_state[row.sku] = {
+                "product_name": row.product_name,
+                "price_pen": float(row.unit_price),
+                "initial": row.initial_stock,
+                "current": row.initial_stock,
+                "total_sold": 0,
+                "total_rejected": 0,
+                "low_alert": False
+            }
+    except Exception as e:
+        print(f"Warning: No se pudo cargar el catálogo de BQ: {e}")
+        
+    if not inventory_state:
+        for i in range(1, num_products + 1):
+            inventory_state[f"CYBER_SKU_{i:03d}"] = {
+                "product_name": f"Producto Sintético Cyber Day {i}",
+                "price_pen": round(29.90 + (i * 15.50), 2),
+                "initial": 80,
+                "current": 80,
+                "total_sold": 0,
+                "total_rejected": 0,
+                "low_alert": False
+            }
+    return inventory_state
+
+def _persist_economic_inventory(run_id: str, events: list, inventory_state: dict):
+    """Guarda los movimientos y snapshots del modo económico en BQ."""
+    import os
+    import uuid
+    from datetime import datetime, timezone
+    from google.cloud import bigquery
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "lumina-retail-001")
+    try:
+        client = bigquery.Client(project=project_id)
+        movements = []
+        for e in events:
+            if e["event_type"] == "inventory_decrement":
+                mov_type = "SALE"
+                qty = e.get("quantity_deducted", 1)
+                order_id = e.get("order_id")
+                sku = e.get("product_id")
+            elif e["event_type"] == "order_rejected":
+                mov_type = "REJECTION"
+                qty = e.get("requested_quantity", 0)
+                order_id = e.get("order_id")
+                sku = e.get("product_id")
+            else:
+                continue
+            movements.append({
+                "movement_id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "sku": sku,
+                "quantity": qty,
+                "movement_type": mov_type,
+                "order_id": order_id,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+            
+        if movements:
+            table_mov = f"{project_id}.lumina_sandbox.inventory_movements"
+            client.insert_rows_json(table_mov, movements)
+
+        snapshots = []
+        for sku, data in inventory_state.items():
+            snapshots.append({
+                "snapshot_id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "sku": sku,
+                "initial_stock": data["initial"],
+                "available_stock": data["current"],
+                "reserved_stock": 0,
+                "sold_stock": data["total_sold"],
+                "rejected_stock": data["total_rejected"],
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+            
+        if snapshots:
+            table_snap = f"{project_id}.lumina_sandbox.inventory_snapshots"
+            client.insert_rows_json(table_snap, snapshots)
+                
+    except Exception as e:
+        print(f"Error persistiendo inventario económico: {e}")
+
 def _run_economic_simulation_worker(run_id: str, config: Dict[str, Any]):
     """Ejecutor en hilo secundario para el Modo Económico con simulación del ciclo de pedidos."""
     global _ACTIVE_RUN_ID
@@ -188,19 +289,8 @@ def _run_economic_simulation_worker(run_id: str, config: Dict[str, Any]):
     init_stock = config["initial_stock_per_product"]
     simulate_idempotency = config.get("simulate_idempotency", True)
 
-    # Catálogo sintético aislado
-    inventory_state = {
-        f"CYBER_SKU_{i:03d}": {
-            "product_name": f"Producto Sintético Cyber Day {i}",
-            "price_pen": round(29.90 + (i * 15.50), 2),
-            "initial": init_stock,
-            "current": init_stock,
-            "total_sold": 0,
-            "total_rejected": 0,
-            "low_alert": False
-        }
-        for i in range(1, num_products + 1)
-    }
+    # Catálogo sintético de BQ
+    inventory_state = _load_synthetic_catalog(num_products)
 
     product_keys = list(inventory_state.keys())
     processed_order_ids = set()
@@ -399,6 +489,7 @@ def _run_economic_simulation_worker(run_id: str, config: Dict[str, Any]):
             _RUNS_STORE[run_id]["latency_ms_avg"] = round((duration_sec / max(len(events_log), 1)) * 1000, 2)
             _RUNS_STORE[run_id]["events"] = events_log
             _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+            threading.Thread(target=_persist_economic_inventory, args=(run_id, events_log, inventory_state)).start()
 
     except Exception as e:
         with _STORE_LOCK:
@@ -518,16 +609,7 @@ def _run_real_streaming_worker(run_id: str, config: Dict[str, Any]):
         
         init_stock = config.get("initial_stock_per_product", 80)
         num_products = config.get("num_products", 10)
-        _RUNS_STORE[run_id]["inventory_state"] = {
-            f"CYBER_SKU_{i:03d}": {
-                "initial": init_stock,
-                "current": init_stock,
-                "total_sold": 0,
-                "total_rejected": 0,
-                "low_alert": False
-            }
-            for i in range(1, num_products + 1)
-        }
+        _RUNS_STORE[run_id]["inventory_state"] = _load_synthetic_catalog(num_products)
         
         _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
 

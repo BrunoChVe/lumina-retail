@@ -85,7 +85,7 @@ class TestSimulationEngine(unittest.TestCase):
         run_id = run_data["run_id"]
 
         # Esperar finalización del hilo en memoria
-        time.sleep(1.2)
+        time.sleep(4.0)
 
         # Consultar estado
         status_res = self.client.get(f"/api/simulation/status/{run_id}")
