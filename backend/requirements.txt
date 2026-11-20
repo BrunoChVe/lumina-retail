@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
 google-cloud-bigquery
+google-cloud-storage
 numpy
 kafka-python-ng
