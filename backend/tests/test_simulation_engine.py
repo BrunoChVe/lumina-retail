@@ -223,9 +223,20 @@ class TestSimulationEngine(unittest.TestCase):
             }
 
         mock_proc = MagicMock(returncode=0, stdout="OK", stderr="")
-        mock_bq_row = MagicMock(total_procesado=0, aprobados=0, rechazados=0, duplicados=0)
+        def mock_query(sql):
+            mock_job = MagicMock()
+            if "total_procesado" in sql:
+                mock_bq_row = MagicMock(total_procesado=0, aprobados=0, rechazados=0, duplicados=0)
+                mock_job.result.return_value = [mock_bq_row]
+            elif "stock_before" in sql and "MAX" in sql:
+                mock_inv_row = MagicMock(sku="CYBER_SKU_001", initial=80, current_stock=60, total_sold=0, total_rejected=0)
+                mock_job.result.return_value = [mock_inv_row]
+            else:
+                mock_job.result.return_value = []
+            return mock_job
+            
         mock_bq_client = MagicMock()
-        mock_bq_client.query.return_value.result.return_value = [mock_bq_row]
+        mock_bq_client.query.side_effect = mock_query
 
         class MockClock:
             def __init__(self):
@@ -268,9 +279,20 @@ class TestSimulationEngine(unittest.TestCase):
             }
 
         mock_proc = MagicMock(returncode=0, stdout="OK", stderr="")
-        mock_bq_row = MagicMock(total_procesado=15, aprobados=12, rechazados=3, duplicados=0)
+        def mock_query(sql):
+            mock_job = MagicMock()
+            if "total_procesado" in sql:
+                mock_bq_row = MagicMock(total_procesado=15, aprobados=12, rechazados=3, duplicados=0)
+                mock_job.result.return_value = [mock_bq_row]
+            elif "stock_before" in sql and "MAX" in sql:
+                mock_inv_row = MagicMock(sku="CYBER_SKU_001", initial=80, current_stock=60, total_sold=12, total_rejected=3)
+                mock_job.result.return_value = [mock_inv_row]
+            else:
+                mock_job.result.return_value = []
+            return mock_job
+            
         mock_bq_client = MagicMock()
-        mock_bq_client.query.return_value.result.return_value = [mock_bq_row]
+        mock_bq_client.query.side_effect = mock_query
 
         class MockClock:
             def __init__(self):
@@ -313,9 +335,20 @@ class TestSimulationEngine(unittest.TestCase):
             }
 
         mock_proc = MagicMock(returncode=0, stdout="OK", stderr="")
-        mock_bq_row = MagicMock(total_procesado=20, aprobados=18, rechazados=2, duplicados=0)
+        def mock_query(sql):
+            mock_job = MagicMock()
+            if "total_procesado" in sql:
+                mock_bq_row = MagicMock(total_procesado=20, aprobados=18, rechazados=2, duplicados=0)
+                mock_job.result.return_value = [mock_bq_row]
+            elif "stock_before" in sql and "MAX" in sql:
+                mock_inv_row = MagicMock(sku="CYBER_SKU_001", initial=80, current_stock=60, total_sold=18, total_rejected=2)
+                mock_job.result.return_value = [mock_inv_row]
+            else:
+                mock_job.result.return_value = []
+            return mock_job
+            
         mock_bq_client = MagicMock()
-        mock_bq_client.query.return_value.result.return_value = [mock_bq_row]
+        mock_bq_client.query.side_effect = mock_query
 
         class MockClock:
             def __init__(self):

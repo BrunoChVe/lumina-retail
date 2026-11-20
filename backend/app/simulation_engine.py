@@ -515,6 +515,20 @@ def _run_real_streaming_worker(run_id: str, config: Dict[str, Any]):
         _RUNS_STORE[run_id]["total_events"] = num_orders
         _RUNS_STORE[run_id]["events_processed"] = 0
         _RUNS_STORE[run_id]["events"] = []
+        
+        init_stock = config.get("initial_stock_per_product", 80)
+        num_products = config.get("num_products", 10)
+        _RUNS_STORE[run_id]["inventory_state"] = {
+            f"CYBER_SKU_{i:03d}": {
+                "initial": init_stock,
+                "current": init_stock,
+                "total_sold": 0,
+                "total_rejected": 0,
+                "low_alert": False
+            }
+            for i in range(1, num_products + 1)
+        }
+        
         _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
 
     try:
@@ -604,6 +618,28 @@ def _run_real_streaming_worker(run_id: str, config: Dict[str, Any]):
                 ev_res = list(client.query(sql_ev).result())
                 events = [dict(e) for e in ev_res]
                 
+                sql_inv = f'''
+                SELECT 
+                  product_id as sku,
+                  MAX(stock_before) as initial,
+                  MIN(stock_after) as current_stock,
+                  SUM(CASE WHEN order_status = 'APPROVED' THEN quantity ELSE 0 END) as total_sold,
+                  COUNTIF(order_status = 'REJECTED') as total_rejected
+                FROM `lumina-retail-001.lumina_streaming.orders_stream_events`
+                WHERE run_id = '{run_id}' AND product_id IS NOT NULL
+                GROUP BY product_id
+                '''
+                inv_res = list(client.query(sql_inv).result())
+                inventory_state = {}
+                for r in inv_res:
+                    inventory_state[r.sku] = {
+                        "initial": r.initial,
+                        "current": r.current_stock,
+                        "total_sold": r.total_sold,
+                        "total_rejected": r.total_rejected,
+                        "low_alert": r.current_stock <= 20
+                    }
+                
                 with _STORE_LOCK:
                     _RUNS_STORE[run_id]["events_processed"] = total_proc
                     _RUNS_STORE[run_id]["total_events"] = total_proc
@@ -613,6 +649,8 @@ def _run_real_streaming_worker(run_id: str, config: Dict[str, Any]):
                     progress = min(100.0, round((total_proc / num_orders) * 100, 1))
                     _RUNS_STORE[run_id]["progress_pct"] = progress
                     _RUNS_STORE[run_id]["events"] = events
+                    if inventory_state:
+                        _RUNS_STORE[run_id].setdefault("inventory_state", {}).update(inventory_state)
                     _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
                     
                 if total_proc >= num_orders:
