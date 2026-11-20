@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 google-cloud-bigquery
 numpy
+kafka-python-ng

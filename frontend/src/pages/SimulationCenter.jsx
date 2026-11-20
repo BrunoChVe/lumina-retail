@@ -80,7 +80,7 @@ export default function SimulationCenter() {
         .then(st => {
           setRunStatus(st);
           // Si sigue corriendo, volver a refrescar historia
-          if (st.status === 'RUNNING' || st.status === 'PENDING') {
+          if (['RUNNING', 'PENDING', 'PROCESSING'].includes(st?.status)) {
             api.simulationHistory().then(setHistory).catch(() => {});
           }
         })
@@ -94,7 +94,7 @@ export default function SimulationCenter() {
     fetchStatus();
     // Si la simulación está activa, hacer polling cada 1 segundo
     let interval = null;
-    if (runStatus?.status === 'RUNNING' || runStatus?.status === 'PENDING') {
+    if (['RUNNING', 'PENDING', 'PROCESSING'].includes(runStatus?.status)) {
       interval = setInterval(fetchStatus, 1200);
     }
 
@@ -174,7 +174,7 @@ export default function SimulationCenter() {
     }));
   }, [runStatus?.inventory_state]);
 
-  const isRunning = runStatus?.status === 'RUNNING' || runStatus?.status === 'PENDING';
+  const isRunning = ['RUNNING', 'PENDING', 'PROCESSING'].includes(runStatus?.status);
 
   return (
     <div className="page-stack simulation-page">
@@ -544,7 +544,7 @@ export default function SimulationCenter() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                   <span style={{
                     fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
-                    background: runStatus?.status === 'COMPLETED' ? '#10b981' : runStatus?.status === 'RUNNING' ? '#0284c7' : '#f59e0b',
+                    background: runStatus?.status === 'COMPLETED' ? '#10b981' : ['RUNNING', 'PROCESSING'].includes(runStatus?.status) ? '#0284c7' : '#f59e0b',
                     color: 'white'
                   }}>
                     ESTADO: {runStatus?.status || 'PENDIENTE'}
@@ -867,8 +867,8 @@ export default function SimulationCenter() {
                     <td>
                       <span style={{
                         fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700,
-                        background: run.status === 'COMPLETED' ? '#064e3b' : run.status === 'RUNNING' ? '#0369a1' : '#7f1d1d',
-                        color: run.status === 'COMPLETED' ? '#34d399' : run.status === 'RUNNING' ? '#38bdf8' : '#f87171'
+                        background: run.status === 'COMPLETED' ? '#064e3b' : ['RUNNING', 'PENDING', 'PROCESSING'].includes(run.status) ? '#0369a1' : '#7f1d1d',
+                        color: run.status === 'COMPLETED' ? '#34d399' : ['RUNNING', 'PENDING', 'PROCESSING'].includes(run.status) ? '#38bdf8' : '#f87171'
                       }}>
                         {run.status}
                       </span>

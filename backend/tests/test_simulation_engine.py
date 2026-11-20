@@ -134,6 +134,241 @@ class TestSimulationEngine(unittest.TestCase):
         res = self.client.post("/api/simulation/cancel/non-existent-id")
         self.assertEqual(res.status_code, 400)
 
+    def test_real_streaming_broker_unreachable_fails_fast(self):
+        """Verifica que si el broker es inalcanzable, la simulación falle rápidamente sin congelarse."""
+        import os
+        from unittest.mock import patch
+        from backend.app.simulation_engine import _run_real_streaming_worker, STATUS_FAILED
+
+        run_id = "test-fail-unreachable-broker"
+        config = {
+            "name": "Prueba Broker Inaccesible",
+            "mode": "REAL_STREAMING",
+            "scenario": "ORDER_CYCLE",
+            "num_orders": 10,
+            "simulate_idempotency": False
+        }
+
+        with patch.dict(os.environ, {"KAFKA_BOOTSTRAP_SERVERS": "127.0.0.1:19099"}):
+            from backend.app.simulation_engine import _RUNS_STORE, _STORE_LOCK
+            with _STORE_LOCK:
+                _RUNS_STORE[run_id] = {
+                    "run_id": run_id,
+                    "status": "PENDING",
+                    "progress_pct": 0.0,
+                    "total_orders": 10,
+                    "events": []
+                }
+            
+            t0 = time.time()
+            _run_real_streaming_worker(run_id, config)
+            duration = time.time() - t0
+
+            # Debe fallar rápido (menos de 6 segundos, no bloquearse 60s)
+            self.assertLess(duration, 6.0)
+            status = get_run_status(run_id)
+            self.assertEqual(status["status"], STATUS_FAILED)
+            self.assertEqual(status["progress_pct"], 0.0)
+            self.assertIn("Fallo al publicar en Kafka", status.get("error_message", ""))
+
+    def test_real_streaming_producer_timeout_handling(self):
+        """Verifica que un timeout en el subproceso del productor marque la simulación como FAILED."""
+        import subprocess
+        from unittest.mock import patch
+        from backend.app.simulation_engine import _run_real_streaming_worker, STATUS_FAILED, _RUNS_STORE, _STORE_LOCK
+
+        run_id = "test-fail-timeout-producer"
+        config = {
+            "name": "Prueba Timeout",
+            "mode": "REAL_STREAMING",
+            "scenario": "ORDER_CYCLE",
+            "num_orders": 10
+        }
+
+        with _STORE_LOCK:
+            _RUNS_STORE[run_id] = {
+                "run_id": run_id,
+                "status": "PENDING",
+                "progress_pct": 0.0,
+                "total_orders": 10,
+                "events": []
+            }
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="python3", timeout=25)):
+            _run_real_streaming_worker(run_id, config)
+            status = get_run_status(run_id)
+            self.assertEqual(status["status"], STATUS_FAILED)
+            self.assertIn("Timeout del productor Kafka", status.get("error_message", ""))
+
+    def test_real_streaming_zero_orders_never_completed(self):
+        """Verifica que si BigQuery no confirma órdenes tras el sondeo, NUNCA se marque COMPLETED."""
+        from unittest.mock import patch, MagicMock
+        from backend.app.simulation_engine import _run_real_streaming_worker, STATUS_FAILED, _RUNS_STORE, _STORE_LOCK
+
+        run_id = "test-zero-orders-fails"
+        config = {
+            "name": "Prueba Cero Órdenes BQ",
+            "mode": "REAL_STREAMING",
+            "scenario": "ORDER_CYCLE",
+            "num_orders": 20
+        }
+
+        with _STORE_LOCK:
+            _RUNS_STORE[run_id] = {
+                "run_id": run_id,
+                "status": "PENDING",
+                "progress_pct": 0.0,
+                "total_orders": 20,
+                "events": []
+            }
+
+        mock_proc = MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_bq_row = MagicMock(total_procesado=0, aprobados=0, rechazados=0, duplicados=0)
+        mock_bq_client = MagicMock()
+        mock_bq_client.query.return_value.result.return_value = [mock_bq_row]
+
+        class MockClock:
+            def __init__(self):
+                self.val = 1000.0
+            def __call__(self):
+                self.val += 25.0
+                return self.val
+
+        with patch("subprocess.run", return_value=mock_proc):
+            with patch("google.cloud.bigquery.Client", return_value=mock_bq_client):
+                with patch("time.sleep", return_value=None):
+                    with patch("time.time", side_effect=MockClock()):
+                        _run_real_streaming_worker(run_id, config)
+
+        status = get_run_status(run_id)
+        self.assertEqual(status["status"], STATUS_FAILED, "Una simulación con 0 órdenes confirmadas NUNCA debe ser COMPLETED")
+        self.assertEqual(status["progress_pct"], 0.0)
+        self.assertIn("Tiempo de espera agotado", status.get("error_message", ""))
+
+    def test_real_streaming_partial_processing_handling(self):
+        """Verifica que el procesamiento parcial (menos pedidos de los solicitados) resulte en FAILED."""
+        from unittest.mock import patch, MagicMock
+        from backend.app.simulation_engine import _run_real_streaming_worker, STATUS_FAILED, _RUNS_STORE, _STORE_LOCK
+
+        run_id = "test-partial-orders-fails"
+        config = {
+            "name": "Prueba Parcial BQ",
+            "mode": "REAL_STREAMING",
+            "scenario": "ORDER_CYCLE",
+            "num_orders": 50
+        }
+
+        with _STORE_LOCK:
+            _RUNS_STORE[run_id] = {
+                "run_id": run_id,
+                "status": "PENDING",
+                "progress_pct": 0.0,
+                "total_orders": 50,
+                "events": []
+            }
+
+        mock_proc = MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_bq_row = MagicMock(total_procesado=15, aprobados=12, rechazados=3, duplicados=0)
+        mock_bq_client = MagicMock()
+        mock_bq_client.query.return_value.result.return_value = [mock_bq_row]
+
+        class MockClock:
+            def __init__(self):
+                self.val = 1000.0
+            def __call__(self):
+                self.val += 25.0
+                return self.val
+
+        with patch("subprocess.run", return_value=mock_proc):
+            with patch("google.cloud.bigquery.Client", return_value=mock_bq_client):
+                with patch("time.sleep", return_value=None):
+                    with patch("time.time", side_effect=MockClock()):
+                        _run_real_streaming_worker(run_id, config)
+
+        status = get_run_status(run_id)
+        self.assertEqual(status["status"], STATUS_FAILED)
+        self.assertEqual(status["events_processed"], 15)
+        self.assertIn("Procesamiento incompleto: solo 15 de 50 pedidos", status.get("error_message", ""))
+
+    def test_real_streaming_full_processing_success(self):
+        """Verifica que cuando BigQuery confirma el 100% de las órdenes, el estado sea COMPLETED."""
+        from unittest.mock import patch, MagicMock
+        from backend.app.simulation_engine import _run_real_streaming_worker, STATUS_COMPLETED, _RUNS_STORE, _STORE_LOCK
+
+        run_id = "test-full-success-orders"
+        config = {
+            "name": "Prueba Éxito Total BQ",
+            "mode": "REAL_STREAMING",
+            "scenario": "ORDER_CYCLE",
+            "num_orders": 20
+        }
+
+        with _STORE_LOCK:
+            _RUNS_STORE[run_id] = {
+                "run_id": run_id,
+                "status": "PENDING",
+                "progress_pct": 0.0,
+                "total_orders": 20,
+                "events": []
+            }
+
+        mock_proc = MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_bq_row = MagicMock(total_procesado=20, aprobados=18, rechazados=2, duplicados=0)
+        mock_bq_client = MagicMock()
+        mock_bq_client.query.return_value.result.return_value = [mock_bq_row]
+
+        class MockClock:
+            def __init__(self):
+                self.val = 1000.0
+            def __call__(self):
+                self.val += 2.0
+                return self.val
+
+        with patch("subprocess.run", return_value=mock_proc):
+            with patch("google.cloud.bigquery.Client", return_value=mock_bq_client):
+                with patch("time.sleep", return_value=None):
+                    with patch("time.time", side_effect=MockClock()):
+                        _run_real_streaming_worker(run_id, config)
+
+        status = get_run_status(run_id)
+        self.assertEqual(status["status"], STATUS_COMPLETED)
+        self.assertEqual(status["progress_pct"], 100.0)
+        self.assertEqual(status["completed_orders"], 18)
+        self.assertEqual(status["rejected_orders"], 2)
+
+    def test_simulation_state_cross_instance_persistence(self):
+        """Verifica que el estado de ejecución persista y pueda recuperarse simulando múltiples instancias."""
+        from unittest.mock import patch
+        from backend.app.simulation_engine import _RUNS_STORE, _STORE_LOCK, get_run_status
+
+        test_run_id = "test-cross-instance-001"
+        sample_record = {
+            "run_id": test_run_id,
+            "name": "Instancia A Registro",
+            "status": "PROCESSING",
+            "progress_pct": 50.0,
+            "total_orders": 30,
+            "completed_orders": 15
+        }
+
+        remote_storage = {test_run_id: dict(sample_record)}
+
+        def mock_load(run_id):
+            return remote_storage.get(run_id)
+
+        with patch("backend.app.simulation_engine._load_run_from_gcs", side_effect=mock_load):
+            # Simular Instancia B: memoria local vacía para este run_id
+            with _STORE_LOCK:
+                if test_run_id in _RUNS_STORE:
+                    del _RUNS_STORE[test_run_id]
+
+            # Instancia B consulta el estado
+            recovered = get_run_status(test_run_id)
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["run_id"], test_run_id)
+            self.assertEqual(recovered["progress_pct"], 50.0)
+            self.assertEqual(recovered["completed_orders"], 15)
+
 
 if __name__ == "__main__":
     unittest.main()

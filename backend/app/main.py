@@ -38,7 +38,7 @@ origins = os.getenv(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in origins],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 

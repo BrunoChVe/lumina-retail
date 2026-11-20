@@ -9,7 +9,9 @@ Soporta dos modalidades:
    estima costos de cómputo y requiere autorización explícita antes de operar.
 """
 
+import json
 import math
+import os
 import random
 import threading
 import time
@@ -396,16 +398,270 @@ def _run_economic_simulation_worker(run_id: str, config: Dict[str, Any]):
             _RUNS_STORE[run_id]["throughput_events_per_sec"] = tps
             _RUNS_STORE[run_id]["latency_ms_avg"] = round((duration_sec / max(len(events_log), 1)) * 1000, 2)
             _RUNS_STORE[run_id]["events"] = events_log
+            _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
 
     except Exception as e:
         with _STORE_LOCK:
             _RUNS_STORE[run_id]["status"] = STATUS_FAILED
             _RUNS_STORE[run_id]["error_message"] = str(e)
             _RUNS_STORE[run_id]["end_time"] = datetime.now(timezone.utc).isoformat()
+            _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
     finally:
         with _STORE_LOCK:
             _ACTIVE_RUN_ID = None
 
+
+# Control de concurrencia optimista mediante generaciones de GCS
+_GCS_GENERATIONS: Dict[str, int] = {}
+
+
+def _save_run_to_gcs(run_id: str, run_data: Dict[str, Any]) -> bool:
+    """Persiste el estado de una simulación en Google Cloud Storage con control de concurrencia optimista.
+    
+    Aprovecha el bucket existente 'lumina-retail-001-data' sin tocar tablas Gold ni datos históricos.
+    Si se detecta concurrencia, evita sobrescribir estados más recientes.
+    """
+    bucket_name = os.getenv("LUMINA_DATA_BUCKET", "lumina-retail-001-data")
+    try:
+        import json
+        from google.cloud import storage
+        client = storage.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "lumina-retail-001"))
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(f"simulation_runs/{run_id}.json")
+        
+        # Payload serializable (evitar objetos mutables no serializables)
+        payload = json.dumps(run_data, default=str)
+        
+        expected_gen = _GCS_GENERATIONS.get(run_id)
+        if expected_gen is not None:
+            blob.upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=expected_gen
+            )
+        else:
+            blob.upload_from_string(
+                payload,
+                content_type="application/json"
+            )
+        blob.reload()
+        _GCS_GENERATIONS[run_id] = blob.generation
+        return True
+    except Exception:
+        # Fallback tolerante si no hay conexión o credenciales de GCS en el entorno de prueba
+        return False
+
+
+def _load_run_from_gcs(run_id: str) -> Optional[Dict[str, Any]]:
+    """Recupera el estado de una simulación desde Google Cloud Storage."""
+    bucket_name = os.getenv("LUMINA_DATA_BUCKET", "lumina-retail-001-data")
+    try:
+        import json
+        from google.cloud import storage
+        client = storage.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "lumina-retail-001"))
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(f"simulation_runs/{run_id}.json")
+        if not blob.exists():
+            return None
+        content = blob.download_as_text()
+        data = json.loads(content)
+        _GCS_GENERATIONS[run_id] = blob.generation
+        return data
+    except Exception:
+        return None
+
+
+def _list_runs_from_gcs() -> List[Dict[str, Any]]:
+    """Lista las ejecuciones persistidas en Google Cloud Storage."""
+    bucket_name = os.getenv("LUMINA_DATA_BUCKET", "lumina-retail-001-data")
+    runs = []
+    try:
+        import json
+        from google.cloud import storage
+        client = storage.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "lumina-retail-001"))
+        bucket = client.bucket(bucket_name)
+        blobs = client.list_blobs(bucket, prefix="simulation_runs/", max_results=100)
+        for blob in blobs:
+            if not blob.name.endswith(".json"):
+                continue
+            try:
+                content = blob.download_as_text()
+                data = json.loads(content)
+                runs.append(data)
+                _GCS_GENERATIONS[data["run_id"]] = blob.generation
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return runs
+
+
+def _run_real_streaming_worker(run_id: str, config: Dict[str, Any]):
+    """Ejecutor en hilo secundario para el Modo Streaming Real invocando el inyector de Kafka."""
+    global _ACTIVE_RUN_ID
+    import subprocess
+    import json
+    import os
+    import time
+    from datetime import datetime, timezone
+    from google.cloud import bigquery
+
+    num_orders = config["num_orders"]
+    
+    with _STORE_LOCK:
+        _RUNS_STORE[run_id]["status"] = STATUS_PROCESSING
+        _RUNS_STORE[run_id]["start_time"] = datetime.now(timezone.utc).isoformat()
+        _RUNS_STORE[run_id]["total_orders"] = num_orders
+        _RUNS_STORE[run_id]["total_events"] = num_orders
+        _RUNS_STORE[run_id]["events_processed"] = 0
+        _RUNS_STORE[run_id]["events"] = []
+        _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+
+    try:
+        kafka_ip = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "10.142.0.3:9092")
+        
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
+        if os.path.basename(base_dir) == "backend":
+            root_dir = os.path.dirname(base_dir)
+        else:
+            root_dir = base_dir
+            
+        script_path = os.path.join(root_dir, "scripts", "stress_orders_kafka.py")
+        
+        cmd = [
+            "python3", script_path,
+            "--bootstrap-servers", kafka_ip,
+            "--num-orders", str(num_orders),
+            "--rate", "20",
+            "--duplicate-rate", "0.05" if config.get("simulate_idempotency") else "0.0",
+            "--run-id", run_id
+        ]
+        
+        # Timeout dinámico seguro: mínimo 25s o proporcional al número de pedidos + 15s de margen
+        producer_timeout = max(25, int(num_orders / 10) + 15)
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=producer_timeout)
+        except subprocess.TimeoutExpired:
+            with _STORE_LOCK:
+                _RUNS_STORE[run_id]["status"] = STATUS_FAILED
+                _RUNS_STORE[run_id]["error_message"] = (
+                    f"Timeout del productor Kafka: se excedió el límite de {producer_timeout}s sin respuesta del subproceso."
+                )
+                _RUNS_STORE[run_id]["end_time"] = datetime.now(timezone.utc).isoformat()
+                _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+            return
+        
+        if result.returncode != 0:
+            err_msg = (result.stderr or result.stdout or f"Fallo con código {result.returncode}").strip()
+            with _STORE_LOCK:
+                _RUNS_STORE[run_id]["status"] = STATUS_FAILED
+                _RUNS_STORE[run_id]["error_message"] = f"Fallo al publicar en Kafka: {err_msg}"
+                _RUNS_STORE[run_id]["end_time"] = datetime.now(timezone.utc).isoformat()
+                _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+            return
+
+        client = bigquery.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "lumina-retail-001"))
+        timeout = 60
+        start_poll = time.time()
+        total_proc = 0
+        aprobados = 0
+        rechazados = 0
+        duplicados = 0
+        events = []
+        bq_consecutive_errors = 0
+        last_bq_error = ""
+        
+        while time.time() - start_poll < timeout:
+            time.sleep(3)
+            try:
+                sql = f'''
+                SELECT 
+                  COUNT(*) as total_procesado,
+                  COUNTIF(order_status = 'APPROVED') as aprobados,
+                  COUNTIF(order_status = 'REJECTED') as rechazados,
+                  COUNTIF(order_status = 'DUPLICATE_IGNORED') as duplicados
+                FROM `lumina-retail-001.lumina_streaming.orders_stream_events`
+                WHERE run_id = '{run_id}'
+                '''
+                res = list(client.query(sql).result())
+                row = res[0]
+                total_proc = row.total_procesado or 0
+                aprobados = row.aprobados or 0
+                rechazados = row.rechazados or 0
+                duplicados = row.duplicados or 0
+                bq_consecutive_errors = 0
+                
+                sql_ev = f'''
+                SELECT event_id, run_id, event_type, order_id, product_id,
+                       CAST(t_order_created AS STRING) as event_timestamp, 
+                       order_status as action, reason, synthetic_flag, quantity as requested_quantity, stock_before as previous_stock, stock_after as new_stock
+                FROM `lumina-retail-001.lumina_streaming.orders_stream_events`
+                WHERE run_id = '{run_id}'
+                ORDER BY processed_at DESC
+                LIMIT 100
+                '''
+                ev_res = list(client.query(sql_ev).result())
+                events = [dict(e) for e in ev_res]
+                
+                with _STORE_LOCK:
+                    _RUNS_STORE[run_id]["events_processed"] = total_proc
+                    _RUNS_STORE[run_id]["total_events"] = total_proc
+                    _RUNS_STORE[run_id]["completed_orders"] = aprobados
+                    _RUNS_STORE[run_id]["rejected_orders"] = rechazados
+                    _RUNS_STORE[run_id]["duplicate_orders_neutralized"] = duplicados
+                    progress = min(100.0, round((total_proc / num_orders) * 100, 1))
+                    _RUNS_STORE[run_id]["progress_pct"] = progress
+                    _RUNS_STORE[run_id]["events"] = events
+                    _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+                    
+                if total_proc >= num_orders:
+                    break
+                    
+            except Exception as bq_err:
+                bq_consecutive_errors += 1
+                last_bq_error = str(bq_err)
+                if bq_consecutive_errors >= 3:
+                    with _STORE_LOCK:
+                        _RUNS_STORE[run_id]["error_message"] = f"Aviso de consulta BigQuery: {last_bq_error}"
+
+        with _STORE_LOCK:
+            end_time = datetime.now(timezone.utc)
+            duration_sec = round((end_time - datetime.fromisoformat(_RUNS_STORE[run_id]["start_time"])).total_seconds(), 2)
+            _RUNS_STORE[run_id]["end_time"] = end_time.isoformat()
+            _RUNS_STORE[run_id]["duration_sec"] = duration_sec
+
+            # REGLA ESTRICTA: Solo permitir COMPLETED si BigQuery confirmó el procesamiento completo
+            if total_proc >= num_orders:
+                _RUNS_STORE[run_id]["status"] = STATUS_COMPLETED
+                _RUNS_STORE[run_id]["progress_pct"] = 100.0
+                _RUNS_STORE[run_id]["total_events"] = total_proc
+                _RUNS_STORE[run_id]["throughput_events_per_sec"] = round(total_proc / max(duration_sec, 0.01), 1)
+            elif total_proc == 0:
+                _RUNS_STORE[run_id]["status"] = STATUS_FAILED
+                _RUNS_STORE[run_id]["progress_pct"] = 0.0
+                _RUNS_STORE[run_id]["error_message"] = (
+                    f"Tiempo de espera agotado ({timeout}s): ninguna orden fue confirmada en BigQuery por el pipeline Spark."
+                    + (f" Último error BQ: {last_bq_error}" if last_bq_error else "")
+                )
+            else:
+                _RUNS_STORE[run_id]["status"] = STATUS_FAILED
+                _RUNS_STORE[run_id]["error_message"] = (
+                    f"Procesamiento incompleto: solo {total_proc} de {num_orders} pedidos fueron procesados en BigQuery tras {timeout}s."
+                )
+
+            _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+            
+    except Exception as e:
+        with _STORE_LOCK:
+            _RUNS_STORE[run_id]["status"] = STATUS_FAILED
+            _RUNS_STORE[run_id]["error_message"] = f"Error interno real streaming: {str(e)}"
+            _RUNS_STORE[run_id]["end_time"] = datetime.now(timezone.utc).isoformat()
+            _save_run_to_gcs(run_id, _RUNS_STORE[run_id])
+    finally:
+        with _STORE_LOCK:
+            if _ACTIVE_RUN_ID == run_id:
+                _ACTIVE_RUN_ID = None
 
 def create_simulation_run(config: Dict[str, Any]) -> Dict[str, Any]:
     """Crea e inicia una nueva simulación con control de concurrencia estricto."""
@@ -457,6 +713,7 @@ def create_simulation_run(config: Dict[str, Any]) -> Dict[str, Any]:
             "events": []
         }
         _RUNS_STORE[run_id] = run_record
+        _save_run_to_gcs(run_id, run_record)
 
     # Iniciar hilo de ejecución en modo económico
     if norm_cfg["mode"] == MODE_ECONOMIC:
@@ -467,11 +724,13 @@ def create_simulation_run(config: Dict[str, Any]) -> Dict[str, Any]:
         )
         worker_thread.start()
     else:
-        # En modo streaming real, solo se valida y prepara (requiere clúster activo)
-        with _STORE_LOCK:
-            _RUNS_STORE[run_id]["status"] = STATUS_FAILED
-            _RUNS_STORE[run_id]["error_message"] = "Infraestructura Kafka/Dataproc suspendida por política de ahorro de créditos. Inicie los servicios antes de lanzar en modo Real."
-            _ACTIVE_RUN_ID = None
+        # En modo streaming real, lanzar el worker especializado
+        worker_thread = threading.Thread(
+            target=_run_real_streaming_worker,
+            args=(run_id, norm_cfg),
+            daemon=True
+        )
+        worker_thread.start()
 
     return {
         "success": True,
@@ -487,7 +746,12 @@ def get_run_status(run_id: str) -> Optional[Dict[str, Any]]:
     with _STORE_LOCK:
         run = _RUNS_STORE.get(run_id)
         if not run:
-            return None
+            remote_run = _load_run_from_gcs(run_id)
+            if remote_run:
+                _RUNS_STORE[run_id] = remote_run
+                run = remote_run
+            else:
+                return None
         # Retornar copia sin el arreglo completo de eventos para evitar payload masivo
         run_copy = dict(run)
         if "events" in run_copy:
@@ -501,7 +765,12 @@ def get_run_events(run_id: str, limit: int = 100, event_type: Optional[str] = No
     with _STORE_LOCK:
         run = _RUNS_STORE.get(run_id)
         if not run:
-            return []
+            remote_run = _load_run_from_gcs(run_id)
+            if remote_run:
+                _RUNS_STORE[run_id] = remote_run
+                run = remote_run
+            else:
+                return []
         events = run.get("events", [])
         if event_type and event_type != "ALL":
             events = [e for e in events if e.get("event_type") == event_type]
@@ -509,8 +778,19 @@ def get_run_events(run_id: str, limit: int = 100, event_type: Optional[str] = No
 
 
 def get_runs_history() -> List[Dict[str, Any]]:
-    """Devuelve el resumen de todas las ejecuciones registradas."""
+    """Devuelve el resumen de todas las ejecuciones registradas unificando memoria y GCS."""
+    remote_runs = _list_runs_from_gcs()
     with _STORE_LOCK:
+        for r in remote_runs:
+            r_id = r.get("run_id")
+            if r_id and r_id not in _RUNS_STORE:
+                _RUNS_STORE[r_id] = r
+            elif r_id and r_id in _RUNS_STORE:
+                local_st = _RUNS_STORE[r_id].get("status")
+                remote_st = r.get("status")
+                if remote_st in [STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED] and local_st not in [STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED]:
+                    _RUNS_STORE[r_id] = r
+
         history = []
         for r_id, r in _RUNS_STORE.items():
             history.append({
@@ -538,7 +818,12 @@ def cancel_simulation_run(run_id: str) -> Dict[str, Any]:
     with _STORE_LOCK:
         run = _RUNS_STORE.get(run_id)
         if not run:
-            return {"success": False, "message": f"Ejecución {run_id} no encontrada."}
+            remote_run = _load_run_from_gcs(run_id)
+            if remote_run:
+                _RUNS_STORE[run_id] = remote_run
+                run = remote_run
+            else:
+                return {"success": False, "message": f"Ejecución {run_id} no encontrada."}
 
         if run.get("status") in [STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED]:
             return {"success": False, "message": f"La ejecución ya se encuentra en estado terminal ({run.get('status')})."}
@@ -546,6 +831,7 @@ def cancel_simulation_run(run_id: str) -> Dict[str, Any]:
         run["cancelled"] = True
         run["status"] = STATUS_CANCELLED
         run["end_time"] = datetime.now(timezone.utc).isoformat()
+        _save_run_to_gcs(run_id, run)
 
         if _ACTIVE_RUN_ID == run_id:
             _ACTIVE_RUN_ID = None
